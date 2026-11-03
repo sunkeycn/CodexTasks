@@ -11,7 +11,7 @@ for (name, size) in sizes {
     NSGraphicsContext.current = context
     context.cgContext.scaleBy(x: CGFloat(size) / 1024, y: CGFloat(size) / 1024)
     let square = NSBezierPath(roundedRect: NSRect(x: 70, y: 70, width: 884, height: 884), xRadius: 195, yRadius: 195)
-    NSGradient(starting: NSColor(calibratedRed: 0.14, green: 0.30, blue: 0.74, alpha: 1), ending: NSColor(calibratedRed: 0.24, green: 0.51, blue: 0.97, alpha: 1))!.draw(in: square, angle: 70)
+    NSGradient(starting: NSColor(calibratedRed: 0.95, green: 0.08, blue: 0.09, alpha: 1), ending: NSColor(calibratedRed: 0.82, green: 0.04, blue: 0.06, alpha: 1))!.draw(in: square, angle: 70)
     for y in [CGFloat(710), 512, 314] {
         let circle = NSBezierPath(ovalIn: NSRect(x: 232, y: y - 48, width: 96, height: 96))
         NSColor.white.withAlphaComponent(0.95).setStroke(); circle.lineWidth = 17; circle.stroke()

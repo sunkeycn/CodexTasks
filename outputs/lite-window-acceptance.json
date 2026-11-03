@@ -1,0 +1,20 @@
+{
+  "checks" : {
+    "attachSession" : true,
+    "copyAssociation" : true,
+    "deleteTask" : true,
+    "detachSession" : true,
+    "manualTaskState" : true,
+    "nativeWindowVisible" : true,
+    "noModelErrors" : true,
+    "otherTaskKeepsMultipleSessions" : true,
+    "quickAddSelectsAndClearsDraft" : true,
+    "renameTask" : true,
+    "screenshotWritten" : true,
+    "taskHasTwoIndependentSessions" : true,
+    "windowHasNoToolbar" : true
+  },
+  "error" : "",
+  "note" : "Real AppKit\/SwiftUI window; model actions and native render verified. Codex external navigation and physical hotkey require interactive verification.",
+  "passed" : true
+}

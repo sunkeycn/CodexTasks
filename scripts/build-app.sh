@@ -4,28 +4,15 @@ TASK_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$TASK_ROOT"
 BUILD_CONFIGURATION="${CONFIGURATION:-release}"
 swift build -c "$BUILD_CONFIGURATION" --product FloatingWorkbench
-swift build -c "$BUILD_CONFIGURATION" --product CodexTaskRunner
-swift build -c "$BUILD_CONFIGURATION" --product CodexStatusHook
 BINARY_DIRECTORY="$(swift build -c "$BUILD_CONFIGURATION" --show-bin-path)"
 STAGING_DIRECTORY="$(mktemp -d "${TMPDIR:-/tmp}/floating-workbench-package.XXXXXX")"
 trap 'rm -rf "$STAGING_DIRECTORY"' EXIT
 APP_DIRECTORY="$STAGING_DIRECTORY/Codex Tasks.app"
 mkdir -p "$APP_DIRECTORY/Contents/MacOS" "$APP_DIRECTORY/Contents/Resources"
 cp "$BINARY_DIRECTORY/FloatingWorkbench" "$APP_DIRECTORY/Contents/MacOS/FloatingWorkbench"
-mkdir -p "$APP_DIRECTORY/Contents/Helpers"
-cp "$BINARY_DIRECTORY/CodexTaskRunner" "$APP_DIRECTORY/Contents/Helpers/CodexTaskRunner"
-cp "$BINARY_DIRECTORY/CodexStatusHook" "$APP_DIRECTORY/Contents/Helpers/CodexStatusHook"
-cp "$TASK_ROOT/scripts/codex-status-hook.py" "$APP_DIRECTORY/Contents/Resources/"
-cp "$TASK_ROOT/docs/CODEX-HOOKS.md" "$APP_DIRECTORY/Contents/Resources/"
 if [[ "${UNIVERSAL:-0}" == "1" ]]; then
   swift build -c "$BUILD_CONFIGURATION" --triple arm64-apple-macosx13.0 --product FloatingWorkbench
   swift build -c "$BUILD_CONFIGURATION" --triple x86_64-apple-macosx13.0 --product FloatingWorkbench
-  swift build -c "$BUILD_CONFIGURATION" --triple arm64-apple-macosx13.0 --product CodexTaskRunner
-  swift build -c "$BUILD_CONFIGURATION" --triple x86_64-apple-macosx13.0 --product CodexTaskRunner
-  swift build -c "$BUILD_CONFIGURATION" --triple arm64-apple-macosx13.0 --product CodexStatusHook
-  swift build -c "$BUILD_CONFIGURATION" --triple x86_64-apple-macosx13.0 --product CodexStatusHook
-  lipo -create "$TASK_ROOT/.build/arm64-apple-macosx/$BUILD_CONFIGURATION/CodexStatusHook" "$TASK_ROOT/.build/x86_64-apple-macosx/$BUILD_CONFIGURATION/CodexStatusHook" -output "$APP_DIRECTORY/Contents/Helpers/CodexStatusHook"
-  lipo -create "$TASK_ROOT/.build/arm64-apple-macosx/$BUILD_CONFIGURATION/CodexTaskRunner" "$TASK_ROOT/.build/x86_64-apple-macosx/$BUILD_CONFIGURATION/CodexTaskRunner" -output "$APP_DIRECTORY/Contents/Helpers/CodexTaskRunner"
   lipo -create "$TASK_ROOT/.build/arm64-apple-macosx/$BUILD_CONFIGURATION/FloatingWorkbench" "$TASK_ROOT/.build/x86_64-apple-macosx/$BUILD_CONFIGURATION/FloatingWorkbench" -output "$APP_DIRECTORY/Contents/MacOS/FloatingWorkbench"
 fi
 mkdir -p "$TASK_ROOT/work"
@@ -41,9 +28,8 @@ cat > "$APP_DIRECTORY/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>Codex Tasks</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.4.2</string>
-<key>CFBundleVersion</key><string>13</string>
-<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>ai.sunkey.floatingworkbench.oauth</string><key>CFBundleURLSchemes</key><array><string>codextasks</string></array></dict></array>
+<key>CFBundleShortVersionString</key><string>2.0.0</string>
+<key>CFBundleVersion</key><string>20</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
@@ -51,8 +37,6 @@ cat > "$APP_DIRECTORY/Contents/Info.plist" <<'PLIST'
 PLIST
 # Sign in an isolated staging directory: Documents File Provider can reattach
 # FinderInfo to a bundle immediately after it has been cleaned.
-codesign --force --sign - "$APP_DIRECTORY/Contents/Helpers/CodexTaskRunner"
-codesign --force --sign - "$APP_DIRECTORY/Contents/Helpers/CodexStatusHook"
 codesign --force --sign - "$APP_DIRECTORY"
 codesign --verify --deep --strict "$APP_DIRECTORY"
 # Validate both the bundle and ZIP before stopping the running app.
