@@ -271,6 +271,8 @@ let linkedOnly = try metadataOnly.read(notBefore: .distantFuture, linkedSessionI
 check("manually-linked-old-session-gets-live-state", linkedOnly.first { $0.id == idB }?.status == .completed)
 check("old-unlinked-sessions-stay-metadata-only", linkedOnly.filter { $0.id != idB }.allSatisfy { $0.taskNumber == nil })
 
+try runIntegrationChecks(root: root, base: base)
+
 let report: [String: Any] = ["passed": failures.isEmpty, "checks":checks, "failures":failures, "count":checks.count]
 if let arg = CommandLine.arguments.firstIndex(of: "--report"), CommandLine.arguments.indices.contains(arg + 1) {
     try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted,.sortedKeys]).write(to: URL(fileURLWithPath: CommandLine.arguments[arg + 1]))

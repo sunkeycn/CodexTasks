@@ -3,3 +3,13 @@
 work/
 outputs/*.app/
 outputs/*.zip
+# Per-user runtime data and local configuration
+*.sqlite
+*.sqlite-*
+/settings.json
+/Integration/
+hooks.json
+hooks.json.codex-tasks-backup-*
+.env
+.env.*
+!.env.example

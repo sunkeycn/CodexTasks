@@ -4,6 +4,7 @@ import CSQLite
 /// Reads only Codex's index and session logs; never visits a repository or invokes Git.
 public final class CodexReader: @unchecked Sendable {
     private let home: URL
+    private let runningTimeout: TimeInterval
     private let lock = NSLock()
     private let fractional: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
@@ -28,8 +29,9 @@ public final class CodexReader: @unchecked Sendable {
     }
     private var cursors: [String: Cursor] = [:]
     public private(set) var hasPendingReads = false
-    public init(home: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")) {
+    public init(home: URL = IntegrationSettings.defaultCodexHome, runningTimeout: TimeInterval = 180) {
         self.home = home.resolvingSymlinksInPath()
+        self.runningTimeout = runningTimeout
     }
     public func read(notBefore: Date = .distantPast, linkedSessionIDs: Set<String> = []) throws -> [ObservedSession] {
         lock.lock(); defer { lock.unlock() }
@@ -72,7 +74,7 @@ public final class CodexReader: @unchecked Sendable {
                     cursors[path.path] = cursor
                     observed.taskNumber = cursor.taskNumber; observed.commandAt = cursor.commandAt
                     observed.status = cursor.state
-                    if observed.status == .running && Date().timeIntervalSince(cursor.modified) > 180 { observed.status = .unknown }
+                    if observed.status == .running && Date().timeIntervalSince(cursor.modified) > runningTimeout { observed.status = .unknown }
                 } catch {
                     // A missing/unreadable log must not turn a previously running session into a fake completion.
                     if let cursor = cursors[path.path] { observed.taskNumber = cursor.taskNumber; observed.commandAt = cursor.commandAt }
@@ -176,19 +178,7 @@ public final class CodexReader: @unchecked Sendable {
     }
     private func command(_ text: String, at date: Date, position: UInt64, cursor: inout Cursor) {
         guard date > (cursor.commandAt ?? .distantPast) || (date == cursor.commandAt && position >= cursor.commandPosition) else { return }
-        var fence: String?
-        for line in text.components(separatedBy: .newlines) {
-            let clean = line.trimmingCharacters(in: .whitespaces)
-            if clean.hasPrefix("```") || clean.hasPrefix("~~~") {
-                let marker = String(clean.prefix(3))
-                if fence == marker { fence = nil } else if fence == nil { fence = marker }
-                continue
-            }
-            guard fence == nil else { continue }
-            let pattern = #"^(?:关联任务|关联Codex[ \t]+Task)[ \t]*[【\[][ \t]*T[#-]([0-9]+)[ \t]*[】\]][ \t]*$"#
-            guard let regex = try? NSRegularExpression(pattern: pattern),
-                  let match = regex.firstMatch(in: clean, range: NSRange(clean.startIndex..., in: clean)),
-                  let range = Range(match.range(at: 1), in: clean), let number = Int64(clean[range]), number > 0 else { continue }
+        if let number = TaskAssociation.number(in: text) {
             cursor.taskNumber = number; cursor.commandAt = date; cursor.commandPosition = position
         }
     }

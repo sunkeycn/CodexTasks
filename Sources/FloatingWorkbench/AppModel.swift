@@ -14,7 +14,16 @@ final class AppModel: ObservableObject {
     @Published var draft: String { didSet { preferences.set(draft, forKey: "lite.quickDraft") } }
     let store: TaskStore
     private let preferences: UserDefaults
-    private let reader: CodexReader
+    @Published private(set) var settings: IntegrationSettings
+    @Published private(set) var hookInspection: HookInspection?
+    @Published private(set) var hookInspectionError: String?
+    let settingsStore: IntegrationSettingsStore
+    private var reader: CodexReader
+    private var readGeneration = 0
+    var hookInstaller: HookInstaller {
+        HookInstaller(home: settings.homeURL, integrationDirectory: store.url.deletingLastPathComponent().appendingPathComponent("Integration", isDirectory: true))
+    }
+    var bundledHookHelper: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/CodexTasksHook") }
     private let queue = DispatchQueue(label: "ai.sunkey.codextasks.lite.reader", qos: .utility)
     private var monitor: CodexMonitor?
     private var timer: Timer?
@@ -50,23 +59,73 @@ final class AppModel: ObservableObject {
         task.hasUnreadCompletion || (collapsedTaskIDs.contains(task.id) && snapshot.children(of: task.id).contains { $0.hasUnreadCompletion })
     }
 
-    init(store: TaskStore, preferences: UserDefaults = .standard, reader: CodexReader = CodexReader(), initialObservations: [ObservedSession] = []) throws {
-        self.store = store; self.preferences = preferences; self.reader = reader
+    init(store: TaskStore, preferences: UserDefaults = .standard, reader: CodexReader? = nil, initialObservations: [ObservedSession] = []) throws {
+        self.store = store; self.preferences = preferences
+        let configuration = IntegrationSettingsStore(url: store.url.deletingLastPathComponent().appendingPathComponent("settings.json"))
+        self.settingsStore = configuration
+        let settings: IntegrationSettings
+        var configurationError: String?
+        do { settings = try configuration.load() }
+        catch { settings = IntegrationSettings(); configurationError = error.localizedDescription }
+        self.settings = settings
+        self.reader = reader ?? CodexReader(home: settings.homeURL, runningTimeout: settings.runningTimeout)
         self.observations = initialObservations
         self.collapsedTaskIDs = Set((preferences.stringArray(forKey: "lite.collapsedTasks") ?? []).compactMap(Int64.init))
         self.draft = preferences.string(forKey: "lite.quickDraft") ?? ""
         snapshot = try store.snapshot(); selectedTaskID = snapshot.tasks.first?.id
+        errorMessage = configurationError
     }
     func start() {
         stopped = false
-        monitor = CodexMonitor { [weak self] in self?.scheduleRead() }
-        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+        monitor = CodexMonitor(home: settings.homeURL, eventDirectory: hookInstaller.eventDirectory) { [weak self] in
+            guard let self else { return }
+            try? self.refresh()
+            self.scheduleRead(delay: 0.05)
+        }
+        let timer = Timer(timeInterval: settings.refreshInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.scheduleRead() }
         }
         RunLoop.main.add(timer, forMode: .common); self.timer = timer
         scheduleRead(delay: 0)
     }
-    func stop() { stopped = true; timer?.invalidate(); timer = nil; scheduled?.cancel(); monitor = nil }
+    func stop() {
+        stopped = true; readGeneration += 1; isReading = false; readAgain = false
+        timer?.invalidate(); timer = nil; scheduled?.cancel(); monitor = nil
+    }
+    func refreshHookInspection() {
+        do { hookInspection = try hookInstaller.inspect(); hookInspectionError = nil }
+        catch { hookInspection = nil; hookInspectionError = error.localizedDescription }
+    }
+    @discardableResult func applySettings(_ draft: IntegrationSettings) -> Bool {
+        do {
+            let validated = try draft.validated()
+            if validated.homeURL != settings.homeURL {
+                let old = try hookInstaller.inspect()
+                guard old.installedEvents.isEmpty && old.legacyHandlers == 0 else { throw LiteError.message("请先移除旧目录中的 Codex Tasks Hooks，再切换 Codex 数据目录。") }
+            }
+            try settingsStore.save(validated)
+            let wasRunning = !stopped
+            stop(); settings = validated
+            reader = CodexReader(home: validated.homeURL, runningTimeout: validated.runningTimeout)
+            observations = []
+            refreshHookInspection()
+            if wasRunning { start() }
+            errorMessage = nil
+            return true
+        } catch { errorMessage = error.localizedDescription; return false }
+    }
+    func installHooks() throws -> URL? {
+        _ = try settings.validated()
+        let backup = try hookInstaller.install(helper: bundledHookHelper)
+        refreshHookInspection()
+        if !stopped { stop(); start() }
+        return backup
+    }
+    func removeHooks() throws -> URL? {
+        let backup = try hookInstaller.uninstall()
+        refreshHookInspection()
+        return backup
+    }
     func scheduleRead(delay: TimeInterval = 0.3) {
         guard !stopped else { return }
         scheduled?.cancel()
@@ -76,27 +135,35 @@ final class AppModel: ObservableObject {
     private func readSessions() {
         guard !isReading else { readAgain = true; return }
         isReading = true
-        let reader = reader, store = store
+        let reader = reader, store = store, generation = readGeneration
+        let events = HookEventStore(directory: hookInstaller.eventDirectory)
+        let timeout = settings.runningTimeout
         queue.async { [weak self] in
             do {
                 let beforeRead = try store.snapshot()
                 let earliest = beforeRead.tasks.map(\.createdAt).min() ?? .distantFuture
                 let linked = Set(beforeRead.sessions.filter { $0.taskID != nil }.map(\.id))
-                let sessions = try reader.read(notBefore: earliest, linkedSessionIDs: linked)
-                try store.reconcile(sessions)
+                var indexed: [ObservedSession] = [], readError: String?
+                do { indexed = try reader.read(notBefore: earliest, linkedSessionIDs: linked) }
+                catch { readError = error.localizedDescription }
+                let sessions = try events.merged(with: indexed, snapshot: beforeRead, runningTimeout: timeout)
                 let pending = reader.hasPendingReads
                 DispatchQueue.main.async {
-                    guard let self, !self.stopped else { return }
+                    guard let self, !self.stopped, self.readGeneration == generation else { return }
                     self.isReading = false
-                    if self.observations != sessions { self.observations = sessions }
-                    do { try self.refresh() } catch { self.errorMessage = error.localizedDescription }
-                    if self.sessionReadError != nil { self.objectWillChange.send(); self.sessionReadError = nil }
+                    do {
+                        // Ignore stale work from the previous settings before writing any associations.
+                        try store.reconcile(sessions)
+                        if self.observations != sessions { self.observations = sessions }
+                        try self.refresh()
+                    } catch { self.errorMessage = error.localizedDescription }
+                    if self.sessionReadError != readError { self.objectWillChange.send(); self.sessionReadError = readError }
                     if self.readAgain || pending { self.readAgain = false; self.scheduleRead(delay: 0.2) }
                 }
             } catch {
                 let message = error.localizedDescription
                 DispatchQueue.main.async {
-                    guard let self, !self.stopped else { return }
+                    guard let self, !self.stopped, self.readGeneration == generation else { return }
                     self.isReading = false
                     if self.sessionReadError != message { self.objectWillChange.send(); self.sessionReadError = message }
                     if self.readAgain { self.readAgain = false; self.scheduleRead(delay: 1) }
@@ -151,16 +218,23 @@ final class AppModel: ObservableObject {
     }
     func open(_ session: SessionItem) {
         guard UUID(uuidString: session.id) != nil,
-              let url = URL(string: "codex://threads/\(session.id)"), NSWorkspace.shared.open(url) else {
+              let url = URL(string: "codex://threads/\(session.id)") else {
             errorMessage = "无法打开 Codex 会话。请确认本机已安装并启动 Codex。"; return
         }
+        if let app = resolvedCodexApplication {
+            NSWorkspace.shared.open([url], withApplicationAt: app, configuration: .init()) { _, error in
+                if error != nil { Task { @MainActor in self.errorMessage = "无法打开 Codex 会话，请检查设置中的应用位置。" } }
+            }
+        } else if !NSWorkspace.shared.open(url) { errorMessage = "未找到处理 Codex 会话链接的应用，请在设置中选择 Codex。" }
+    }
+    var resolvedCodexApplication: URL? {
+        settings.applicationURL ?? URL(string: "codex://").flatMap { NSWorkspace.shared.urlForApplication(toOpen: $0) }
     }
     func showCodex() {
-        let candidates = ["/Applications/Codex.app", "/Applications/ChatGPT.app"]
-        guard let path = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+        guard let app = resolvedCodexApplication else {
             errorMessage = "未找到 Codex 应用，请先启动 Codex，再发送关联指令。"; return
         }
-        NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: path), configuration: .init()) { _, error in
+        NSWorkspace.shared.openApplication(at: app, configuration: .init()) { _, error in
             if let error { Task { @MainActor in self.errorMessage = error.localizedDescription } }
         }
     }

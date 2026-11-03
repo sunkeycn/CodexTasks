@@ -24,8 +24,8 @@
 - `FloatingWorkbench/AppModel.swift`：异步刷新、选择和用户动作。
 - `FloatingWorkbench/Views.swift`：单屏任务列表、详情、会话卡片和快速记录。
 - `FloatingWorkbench/TaskSplitView.swift`：原生分栏托管，内容变化和弹窗关闭不重置拖动后的宽度。
-- `FloatingWorkbench/AppHost.swift`：唯一原生窗口、菜单栏、快捷键和隔离窗口验收。
-- `FloatingWorkbench/CodexMonitor.swift`：观察 Codex 索引和日志；不观察 SQLite SHM，避免读取反馈循环。
+- `FloatingWorkbench/AppHost.swift`：任务窗口、独立设置窗口、菜单栏、快捷键和隔离窗口验收。
+- `FloatingWorkbench/CodexMonitor.swift`：观察 Codex 索引、日志和本地 Hooks 事件；不观察 SQLite SHM，避免读取反馈循环。
 
 ## 界面
 
@@ -34,4 +34,14 @@
 左侧隐藏任务编号，卡片全部留白区域可点击切换，状态圈与折叠箭头单独响应；子任务缩进一层。父任务右侧箭头折叠／展开，完成未读红点显示在卡片右侧。左侧标题最多三行并提供全文悬停提示。详情任务编号紧挨任务名；原圆形加号的位置放“＋ 子任务”。第二行状态组在左，删除图标与“关联会话”在右，关联按钮最右对齐。会话弹窗支持连续多选，点击外部收起。
 
 
-没有原版模块、顶部 Tabs、工作空间入口、应用设置、服务运行状态、同步按钮、紧凑窗口或外部执行调度。
+没有原版模块、顶部 Tabs、工作空间入口、服务运行状态、同步按钮或外部执行调度。连接设置独立从 macOS 菜单打开，不占用任务主体布局。
+
+## 可选连接与 Hooks
+
+- `IntegrationSettings`：当前用户的 Codex 目录、应用位置及读取间隔；独立 JSON 不增加业务表。
+- `HookInstaller`：合并配置、备份、稳定路径部署及仅移除本应用 Hooks；不更改 Codex 信任记录。
+- `CodexTasksHook`：双架构原生命令，接收 stdin，仅写入本地元数据事件；任何解析错误均静默成功退出。
+- `HookEventStore`：每会话锁、原子写、乱序过滤；与索引观察按时间合并，最终仍通过 TaskStore 统一协调关联与完成提醒。
+- 保存设置会使旧后台读取失效，避免更换连接后旧回调写入过时关联。
+
+详细路径审计、配置边界与迁移说明见 `CONFIGURATION.md` 及 README。

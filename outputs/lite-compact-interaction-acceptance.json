@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "environment": "Isolated native app ai.sunkey.codextasks.windowtest with synthetic task database; no real task changes.",
+  "checks": {
+    "menuOpensCompactWindow": true,
+    "completionButtonKeepsCompactWindow": true,
+    "completionButtonChangesOnlyTaskStatus": true,
+    "taskCardRestoresNormalWindowAndMatchingDetail": true,
+    "disclosureOpensParentDetailAndPreservesCollapse": true,
+    "childCardOpensChildDetail": true,
+    "focusedShortcutCompactToNormal": true,
+    "focusedShortcutNormalToHidden": true
+  },
+  "note": "Actual native clicks and focused-app shortcut events verified. Global Carbon shortcut registration succeeded. The complete hidden/compact/normal state machine is covered by window acceptance; synthesized app-targeted input cannot verify a physical global shortcut while another app is focused."
+}

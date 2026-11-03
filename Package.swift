@@ -8,6 +8,7 @@ let package = Package(
     targets: [
         .systemLibrary(name: "CSQLite", pkgConfig: "sqlite3"),
         .target(name: "LiteCore", dependencies: ["CSQLite"]),
+        .executableTarget(name: "CodexTasksHook", dependencies: ["LiteCore"]),
         .executableTarget(name: "FloatingWorkbench", dependencies: ["LiteCore"]),
         .executableTarget(name: "LiteAcceptance", dependencies: ["LiteCore", "CSQLite"], path: "Tests/LiteAcceptance")
     ]

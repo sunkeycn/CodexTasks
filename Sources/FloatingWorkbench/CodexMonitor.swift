@@ -4,9 +4,12 @@ import CoreServices
 /// Watches Codex metadata only. SHM is excluded to avoid feedback from our own SQLite reads.
 final class CodexMonitor {
     private var stream: FSEventStreamRef?
-    private let home = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex").resolvingSymlinksInPath().path
+    private let home: String
+    private let eventDirectory: String
     private let onChange: () -> Void
-    init(onChange: @escaping () -> Void) {
+    init(home: URL, eventDirectory: URL, onChange: @escaping () -> Void) {
+        self.home = home.resolvingSymlinksInPath().path
+        self.eventDirectory = eventDirectory.resolvingSymlinksInPath().path
         self.onChange = onChange
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
         stream = FSEventStreamCreate(nil, { _, info, count, rawPaths, flags, _ in
@@ -15,7 +18,7 @@ final class CodexMonitor {
             let paths = unsafeBitCast(rawPaths, to: NSArray.self) as? [String] ?? []
             let dropped = (0..<count).contains { flags[$0] & FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs) != 0 }
             if dropped || paths.contains(where: monitor.relevant) { monitor.onChange() }
-        }, &context, [home] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.15,
+        }, &context, [self.home, eventDirectory.deletingLastPathComponent().path] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.15,
         FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer))
         if let stream {
             FSEventStreamSetDispatchQueue(stream, .main)
@@ -24,7 +27,8 @@ final class CodexMonitor {
     }
     private func relevant(_ path: String) -> Bool {
         let url = URL(fileURLWithPath: path)
-        return (url.deletingLastPathComponent().path == home && url.lastPathComponent.range(of: "^state_[0-9]+\\.sqlite(?:-wal)?$", options: .regularExpression) != nil)
+        return (url.deletingLastPathComponent().path == eventDirectory && url.pathExtension == "json")
+            || (url.deletingLastPathComponent().path == home && url.lastPathComponent.range(of: "^state_[0-9]+\\.sqlite(?:-wal)?$", options: .regularExpression) != nil)
             || ((path.hasPrefix(home + "/sessions/") || path.hasPrefix(home + "/archived_sessions/")) && path.hasSuffix(".jsonl"))
     }
     deinit { if let stream { FSEventStreamStop(stream); FSEventStreamInvalidate(stream); FSEventStreamRelease(stream) } }

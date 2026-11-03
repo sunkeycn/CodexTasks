@@ -1,0 +1,14 @@
+{
+  "checks": {
+    "native-helper-bounded-input-fails-open": true,
+    "native-helper-ignores-subagents": true,
+    "native-helper-invalid-json-does-not-block-codex": true,
+    "native-helper-metadata-only": true,
+    "native-helper-private-event-permissions": true,
+    "native-helper-records-completion": true,
+    "native-helper-records-running-and-task": true,
+    "native-helper-success-without-output": true
+  },
+  "count": 8,
+  "passed": true
+}

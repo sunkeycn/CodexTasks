@@ -63,44 +63,8 @@ struct RootView: View {
         }.frame(maxHeight: .infinity).background(sidebarColor)
     }
     private func taskRow(_ task: TaskItem) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Button { model.status(task, task.status == .done ? .todo : .done) } label: {
-                StatusCircle(status: task.status).frame(width: 18, height: 18)
-            }.help(task.status == .done ? "标为未开始" : "标为已完成").accessibilityLabel("切换 \(task.number) 完成状态")
-            Text(task.title).font(.system(size: 13, weight: .medium))
-                .lineLimit(3).fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading).help(task.title).allowsHitTesting(false)
-            if model.hasUnreadCompletion(task) {
-                Circle().fill(Color.red).frame(width: 7, height: 7).padding(.top, 5)
-                    .help("有新的会话运行完成，点击任务查看")
-                    .accessibilityLabel("有新的会话运行完成").accessibilityIdentifier("task-unread-\(task.id)")
-                    .allowsHitTesting(false)
-            }
-            if !model.snapshot.children(of: task.id).isEmpty {
-                Button { model.toggleExpanded(task) } label: {
-                    Image(systemName: model.collapsedTaskIDs.contains(task.id) ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
-                        .frame(width: 18, height: 18).contentShape(Rectangle())
-                }.help(model.collapsedTaskIDs.contains(task.id) ? "展开子任务" : "折叠子任务")
-                    .accessibilityLabel(model.collapsedTaskIDs.contains(task.id) ? "展开子任务" : "折叠子任务")
-                    .accessibilityIdentifier("task-disclosure-\(task.id)")
-            }
-        }
-        .padding(.horizontal, 12).padding(.vertical, 13)
-        .background {
-            Button { model.selectTask(task) } label: {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(model.selectedTaskID == task.id ? accent.opacity(0.09) : Color.white.opacity(0.75))
-                    .contentShape(RoundedRectangle(cornerRadius: 10))
-            }.buttonStyle(.plain).accessibilityLabel(task.title).accessibilityIdentifier("task-row-\(task.id)")
-        }
-        .padding(.leading, task.parentID == nil ? 0 : 22)
-        .overlay(alignment: .leading) {
-            if task.parentID != nil {
-                Image(systemName: "arrow.turn.down.right").font(.system(size: 10))
-                    .foregroundColor(ink.opacity(0.3)).frame(width: 16).allowsHitTesting(false)
-            }
-        }
+        TaskCard(model: model, task: task, onSelect: { model.selectTask(task) },
+                 onDisclosure: { model.toggleExpanded(task) })
         .contextMenu {
             if task.parentID == nil { Button("新建子任务") { addingChildTo = task } }
             Button("复制关联指令") { model.copyPrompt(task) }
@@ -119,6 +83,85 @@ struct RootView: View {
                 Spacer()
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+}
+
+/// The completion control is a sibling of the card's background button, so it never opens details.
+private struct TaskCard: View {
+    @ObservedObject var model: AppModel
+    let task: TaskItem
+    let onSelect: () -> Void
+    let onDisclosure: () -> Void
+    var opensDetails = false
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Button { model.status(task, task.status == .done ? .todo : .done) } label: {
+                StatusCircle(status: task.status).frame(width: 18, height: 18)
+            }.help(task.status == .done ? "标为未开始" : "标为已完成").accessibilityLabel("切换 \(task.number) 完成状态")
+            Text(task.title).font(.system(size: 13, weight: .medium))
+                .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading).help(task.title).allowsHitTesting(false)
+            if model.hasUnreadCompletion(task) {
+                Circle().fill(Color.red).frame(width: 7, height: 7).padding(.top, 5)
+                    .help("有新的会话运行完成，点击任务查看")
+                    .accessibilityLabel("有新的会话运行完成").accessibilityIdentifier("task-unread-\(task.id)")
+                    .allowsHitTesting(false)
+            }
+            if !model.snapshot.children(of: task.id).isEmpty {
+                Button(action: onDisclosure) {
+                    Image(systemName: model.collapsedTaskIDs.contains(task.id) ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                        .frame(width: 18, height: 18).contentShape(Rectangle())
+                }.help(opensDetails ? "打开任务详情" : model.collapsedTaskIDs.contains(task.id) ? "展开子任务" : "折叠子任务")
+                    .accessibilityLabel(opensDetails ? "打开任务详情" : model.collapsedTaskIDs.contains(task.id) ? "展开子任务" : "折叠子任务")
+                    .accessibilityIdentifier("task-disclosure-\(task.id)")
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 13)
+        .background {
+            Button(action: onSelect) {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(model.selectedTaskID == task.id ? accent.opacity(0.09) : Color.white.opacity(0.75))
+                    .contentShape(RoundedRectangle(cornerRadius: 10))
+            }.buttonStyle(.plain).accessibilityLabel(task.title).accessibilityIdentifier("task-row-\(task.id)")
+        }
+        .padding(.leading, task.parentID == nil ? 0 : 22)
+        .overlay(alignment: .leading) {
+            if task.parentID != nil {
+                Image(systemName: "arrow.turn.down.right").font(.system(size: 10))
+                    .foregroundColor(ink.opacity(0.3)).frame(width: 16).allowsHitTesting(false)
+            }
+        }
+    }
+}
+
+struct CompactTaskView: View {
+    @ObservedObject var model: AppModel
+    let onOpenTask: (TaskItem) -> Void
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 8) {
+                ForEach(model.visibleTasks) { task in
+                    TaskCard(model: model, task: task, onSelect: { onOpenTask(task) },
+                             onDisclosure: { onOpenTask(task) }, opensDetails: true)
+                }
+                if model.snapshot.tasks.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "checklist").font(.system(size: 24)).foregroundColor(accent.opacity(0.5))
+                        Text("还没有任务").font(.system(size: 13, weight: .medium))
+                        Text("⌘⇧空格 切换到正常窗口添加任务").font(.system(size: 11)).foregroundColor(.secondary)
+                    }.frame(maxWidth: .infinity).padding(.vertical, 24)
+                }
+                if let error = model.errorMessage {
+                    Text(error).font(.system(size: 11)).foregroundColor(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                }
+            }.padding(12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(sidebarColor).foregroundColor(ink).tint(accent)
+        .buttonStyle(.plain).preferredColorScheme(.light)
+        .accessibilityIdentifier("compact-task-list")
     }
 }
 
