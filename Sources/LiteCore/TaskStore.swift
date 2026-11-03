@@ -19,7 +19,7 @@ public final class TaskStore: @unchecked Sendable {
             sqlite3_busy_timeout(db, 3000)
             let version = try scalar("PRAGMA user_version")
             let applicationID = try scalar("PRAGMA application_id")
-            guard (version == 0 && applicationID == 0) || ((1...2).contains(version) && applicationID == 0x43544C54) else {
+            guard (version == 0 && applicationID == 0) || ((1...3).contains(version) && applicationID == 0x43544C54) else {
                 throw LiteError.message("该文件不是受支持的轻量版数据库，已停止读取。")
             }
             if version == 0 {
@@ -67,6 +67,12 @@ public final class TaskStore: @unchecked Sendable {
                     PRAGMA user_version=2;
                     """)
                 }
+                if try scalar("PRAGMA user_version") == 2 {
+                    try execute("""
+                    ALTER TABLE tasks ADD COLUMN unread_completion INTEGER NOT NULL DEFAULT 0 CHECK(unread_completion IN (0,1));
+                    PRAGMA user_version=3;
+                    """)
+                }
             }
             try execute("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")
         } catch {
@@ -110,11 +116,11 @@ public final class TaskStore: @unchecked Sendable {
         try execute("BEGIN")
         do {
             var tasks: [TaskItem] = [], sessions: [SessionItem] = []
-            let t = try statement("SELECT id,title,status,created_at,parent_id FROM tasks ORDER BY id ASC")
+            let t = try statement("SELECT id,title,status,created_at,parent_id,unread_completion FROM tasks ORDER BY id ASC")
             defer { sqlite3_finalize(t) }
             var code = sqlite3_step(t)
             while code == SQLITE_ROW {
-                tasks.append(TaskItem(id: sqlite3_column_int64(t, 0), title: text(t, 1), status: TaskStatus(rawValue: text(t, 2)) ?? .todo, createdAt: Date(timeIntervalSince1970: sqlite3_column_double(t, 3)), parentID: sqlite3_column_type(t, 4) == SQLITE_NULL ? nil : sqlite3_column_int64(t, 4)))
+                tasks.append(TaskItem(id: sqlite3_column_int64(t, 0), title: text(t, 1), status: TaskStatus(rawValue: text(t, 2)) ?? .todo, createdAt: Date(timeIntervalSince1970: sqlite3_column_double(t, 3)), parentID: sqlite3_column_type(t, 4) == SQLITE_NULL ? nil : sqlite3_column_int64(t, 4), hasUnreadCompletion: sqlite3_column_int(t, 5) != 0))
                 code = sqlite3_step(t)
             }
             guard code == SQLITE_DONE else { throw databaseError() }
@@ -145,6 +151,12 @@ public final class TaskStore: @unchecked Sendable {
             if let parentID { sqlite3_bind_int64(s, 3, parentID) } else { sqlite3_bind_null(s, 3) }
             try finish(s)
             return sqlite3_last_insert_rowid(db)
+        }
+    }
+    public func markTaskRead(_ id: Int64) throws {
+        try transaction {
+            let s = try statement("UPDATE tasks SET unread_completion=0 WHERE id=?"); defer { sqlite3_finalize(s) }
+            sqlite3_bind_int64(s, 1, id); try finish(s)
         }
     }
     public func renameTask(_ id: Int64, title: String) throws {
@@ -183,8 +195,10 @@ public final class TaskStore: @unchecked Sendable {
     private func upsert(_ observed: ObservedSession, taskID: Int64?, boundAt: Date) throws {
         let s = try statement("""
         INSERT INTO sessions(id,task_id,title,status,updated_at,bound_at) VALUES (?,?,?,?,?,?)
-        ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,title=excluded.title,
-        status=excluded.status,updated_at=excluded.updated_at,bound_at=excluded.bound_at
+        ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,
+        title=CASE WHEN excluded.updated_at>=sessions.updated_at THEN excluded.title ELSE sessions.title END,
+        status=CASE WHEN excluded.updated_at>=sessions.updated_at THEN excluded.status ELSE sessions.status END,
+        updated_at=MAX(sessions.updated_at,excluded.updated_at),bound_at=excluded.bound_at
         """)
         defer { sqlite3_finalize(s) }
         bind(observed.id, s, 1)
@@ -198,22 +212,34 @@ public final class TaskStore: @unchecked Sendable {
     /// Newer explicit user commands may reassign one session. Other sessions on that task stay attached.
     public func reconcile(_ observations: [ObservedSession]) throws {
         try transaction {
-            var tasks: [Int64: Date] = [:], bindings: [String: (Int64?, Date)] = [:]
+            var tasks: [Int64: Date] = [:], bindings: [String: (Int64?, Date, SessionStatus, Date)] = [:]
             let t = try statement("SELECT id,created_at FROM tasks"); defer { sqlite3_finalize(t) }
             while sqlite3_step(t) == SQLITE_ROW { tasks[sqlite3_column_int64(t, 0)] = Date(timeIntervalSince1970: sqlite3_column_double(t, 1)) }
-            let s = try statement("SELECT id,task_id,bound_at FROM sessions"); defer { sqlite3_finalize(s) }
+            let s = try statement("SELECT id,task_id,bound_at,status,updated_at FROM sessions"); defer { sqlite3_finalize(s) }
             while sqlite3_step(s) == SQLITE_ROW {
-                bindings[text(s, 0)] = (sqlite3_column_type(s, 1) == SQLITE_NULL ? nil : sqlite3_column_int64(s, 1), Date(timeIntervalSince1970: sqlite3_column_double(s, 2)))
+                bindings[text(s, 0)] = (sqlite3_column_type(s, 1) == SQLITE_NULL ? nil : sqlite3_column_int64(s, 1), Date(timeIntervalSince1970: sqlite3_column_double(s, 2)), SessionStatus(rawValue: text(s, 3)) ?? .unknown, Date(timeIntervalSince1970: sqlite3_column_double(s, 4)))
             }
             for observed in observations {
-                var binding = bindings[observed.id]
+                let previous = bindings[observed.id]
+                var binding: (Int64?, Date)? = previous.map { ($0.0, $0.1) }
                 if let number = observed.taskNumber, let commandAt = observed.commandAt,
                    let createdAt = tasks[number], commandAt >= createdAt,
                    binding == nil || commandAt > binding!.1 {
                     binding = (number, commandAt)
                 }
                 guard let binding else { continue }
+                if let taskID = binding.0, let previous, previous.0 == taskID,
+                   previous.2 == .running, observed.status == .completed, observed.updatedAt >= previous.3 {
+                    let unread = try statement("UPDATE tasks SET unread_completion=1 WHERE id=?")
+                    defer { sqlite3_finalize(unread) }
+                    sqlite3_bind_int64(unread, 1, taskID); try finish(unread)
+                }
                 try upsert(observed, taskID: binding.0, boundAt: binding.1)
+                if let previous, previous.3 > observed.updatedAt {
+                    bindings[observed.id] = (binding.0, binding.1, previous.2, previous.3)
+                } else {
+                    bindings[observed.id] = (binding.0, binding.1, observed.status, observed.updatedAt)
+                }
             }
         }
     }

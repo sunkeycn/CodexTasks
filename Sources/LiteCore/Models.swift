@@ -13,6 +13,7 @@ public struct TaskItem: Identifiable, Equatable, Sendable {
     public var status: TaskStatus
     public let createdAt: Date
     public var parentID: Int64? = nil
+    public var hasUnreadCompletion: Bool = false
     public var number: String { String(format: "T#%02lld", id) }
     public var associationPrompt: String { "关联任务【\(number)】" }
 }

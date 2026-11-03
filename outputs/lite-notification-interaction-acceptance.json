@@ -1,0 +1,21 @@
+{
+  "version": "2.0.4",
+  "passed": true,
+  "checks": {
+    "completion_red_dot_rendered_on_right": true,
+    "blank_child_card_area_selects_task": true,
+    "blank_parent_card_area_selects_and_acknowledges": true,
+    "status_control_does_not_select_another_task": true,
+    "disclosure_hides_children": true,
+    "width_368_restored_after_real_quit_and_relaunch": true,
+    "collapsed_state_restored_after_real_quit_and_relaunch": true,
+    "acknowledged_badge_stays_cleared_after_relaunch": true,
+    "top_right_subtask_action_creates_and_expands_parent": true,
+    "collapsing_selected_child_switches_detail_to_parent": true,
+    "task_number_next_to_title": true,
+    "session_action_right_aligned_on_status_row_at_minimum_window_width": true,
+    "session_picker_opens_from_new_action_and_stays_after_selection": true,
+    "session_picker_dismisses_on_outside_click": true
+  },
+  "method": "CUA screenshots and native accessibility state on a separate demo bundle and isolated database; quit and relaunch tested against the same isolated data. No user task database was used for test actions."
+}

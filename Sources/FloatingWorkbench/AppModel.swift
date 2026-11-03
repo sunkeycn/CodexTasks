@@ -7,6 +7,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var snapshot = TaskSnapshot()
     @Published private(set) var observations: [ObservedSession] = []
     @Published var selectedTaskID: Int64?
+    @Published private(set) var collapsedTaskIDs: Set<Int64> = [] {
+        didSet { preferences.set(collapsedTaskIDs.sorted().map(String.init), forKey: "lite.collapsedTasks") }
+    }
     @Published var errorMessage: String?
     @Published var draft: String { didSet { preferences.set(draft, forKey: "lite.quickDraft") } }
     let store: TaskStore
@@ -23,10 +26,34 @@ final class AppModel: ObservableObject {
     var selectedTask: TaskItem? { snapshot.tasks.first { $0.id == selectedTaskID } }
     var sessions: [SessionItem] { selectedTaskID.map { snapshot.sessions(for: $0) } ?? [] }
     var pickerMessage: String? { sessionReadError }
+    var visibleTasks: [TaskItem] {
+        snapshot.rootTasks.flatMap { [$0] + (collapsedTaskIDs.contains($0.id) ? [] : snapshot.children(of: $0.id)) }
+    }
+    var sidebarWidth: CGFloat {
+        let saved = preferences.double(forKey: "lite.sidebarWidth")
+        return saved.isFinite && saved >= 180 ? min(440, saved) : 300
+    }
+    func rememberSidebarWidth(_ width: CGFloat) { preferences.set(Double(width), forKey: "lite.sidebarWidth") }
+    func selectTask(_ task: TaskItem) {
+        if let parentID = task.parentID { collapsedTaskIDs.remove(parentID) }
+        selectedTaskID = task.id
+        if task.hasUnreadCompletion { perform { try store.markTaskRead(task.id) } }
+    }
+    func toggleExpanded(_ task: TaskItem) {
+        if collapsedTaskIDs.contains(task.id) { collapsedTaskIDs.remove(task.id) }
+        else {
+            collapsedTaskIDs.insert(task.id)
+            if selectedTask?.parentID == task.id { selectedTaskID = task.id }
+        }
+    }
+    func hasUnreadCompletion(_ task: TaskItem) -> Bool {
+        task.hasUnreadCompletion || (collapsedTaskIDs.contains(task.id) && snapshot.children(of: task.id).contains { $0.hasUnreadCompletion })
+    }
 
     init(store: TaskStore, preferences: UserDefaults = .standard, reader: CodexReader = CodexReader(), initialObservations: [ObservedSession] = []) throws {
         self.store = store; self.preferences = preferences; self.reader = reader
         self.observations = initialObservations
+        self.collapsedTaskIDs = Set((preferences.stringArray(forKey: "lite.collapsedTasks") ?? []).compactMap(Int64.init))
         self.draft = preferences.string(forKey: "lite.quickDraft") ?? ""
         snapshot = try store.snapshot(); selectedTaskID = snapshot.tasks.first?.id
     }
@@ -101,6 +128,7 @@ final class AppModel: ObservableObject {
     @discardableResult func addSubtask(title: String, to parent: TaskItem) -> Bool {
         var id: Int64?
         guard perform({ id = try store.createTask(title: title, parentID: parent.id) }) else { return false }
+        collapsedTaskIDs.remove(parent.id)
         selectedTaskID = id
         if let task = selectedTask { copyPrompt(task) }
         scheduleRead(delay: 0)

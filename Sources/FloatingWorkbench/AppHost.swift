@@ -31,6 +31,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let store = try TaskStore(url: directory.appendingPathComponent("tasks.sqlite"))
             let isolated = smokePath != nil || CommandLine.arguments.contains("--demo")
             let preferences = isolated ? UserDefaults(suiteName: "ai.sunkey.codextasks.lite.smoke")! : .standard
+            if smokePath != nil {
+                preferences.removeObject(forKey: "lite.sidebarWidth")
+                preferences.removeObject(forKey: "lite.collapsedTasks")
+            }
             if isolated { if try store.snapshot().tasks.isEmpty { try seed(store) } }
             let fixtures: [ObservedSession] = isolated ? [
                 ObservedSession(id: "00000000-0000-4000-8000-000000000001", title: "Codex Session", status: .running),
@@ -110,7 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !sidebarWidthInitialized, let content = panel.contentView {
             content.layoutSubtreeIfNeeded()
             if let split = findSplitView(in: content) {
-                split.setPosition(300, ofDividerAt: 0)
+                split.setPosition(model.sidebarWidth, ofDividerAt: 0)
                 sidebarWidthInitialized = true
             }
         }
@@ -135,7 +139,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         _ = try store.createTask(title: "验证多会话关联", parentID: first)
         _ = try store.createTask(title: "优化任务与多个 Codex 会话的关联体验，并验证侧栏宽度调整与长标题的完整展示")
         try store.attach(ObservedSession(id: "00000000-0000-4000-8000-000000000001", title: "Codex Session", status: .running), to: first)
-        try store.attach(ObservedSession(id: "00000000-0000-4000-8000-000000000002", title: "Codex Session", status: .completed), to: first)
+        let running = ObservedSession(id: "00000000-0000-4000-8000-000000000002", title: "Codex Session", status: .running)
+        try store.attach(running, to: first)
+        var completed = running; completed.status = .completed; completed.updatedAt = running.updatedAt.addingTimeInterval(1)
+        try store.reconcile([completed])
     }
     private func capture(_ path: String) throws {
         guard let view = panel.contentView else { throw LiteError.message("没有可截图的窗口。") }
@@ -167,6 +174,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             checks["taskHasTwoIndependentSessions"] = model.sessions.count == 2 && Set(model.sessions.map(\.status)).count == 2
             if let screenshot = argument("--screenshot-output") { try capture(screenshot); checks["screenshotWritten"] = FileManager.default.fileExists(atPath: screenshot) }
             let first = model.selectedTask!
+            checks["completionBadgeFromRunningTransition"] = model.hasUnreadCompletion(first)
+            model.selectTask(first)
+            checks["selectTaskAcknowledgesCompletion"] = model.selectedTask?.hasUnreadCompletion == false
+            model.toggleExpanded(first)
+            checks["collapseHidesChildren"] = !model.visibleTasks.contains { $0.parentID == first.id }
+            let restored = try AppModel(store: model.store, preferences: UserDefaults(suiteName: "ai.sunkey.codextasks.lite.smoke")!)
+            checks["collapsedStateRestores"] = restored.collapsedTaskIDs.contains(first.id)
+            model.toggleExpanded(first)
+            checks["expandShowsChildren"] = model.visibleTasks.filter { $0.parentID == first.id }.count == 2
+            model.rememberSidebarWidth(352)
+            checks["sidebarWidthRestores"] = restored.sidebarWidth == 352
+            model.rememberSidebarWidth(300)
+            let seededChild = model.snapshot.children(of: first.id)[0]
+            let childRun = ObservedSession(id: UUID().uuidString, title: "子任务完成提醒", status: .running)
+            try model.store.attach(childRun, to: seededChild.id)
+            var childDone = childRun; childDone.status = .completed; childDone.updatedAt = childRun.updatedAt.addingTimeInterval(1)
+            try model.store.reconcile([childDone]); try model.refresh()
+            model.toggleExpanded(first)
+            checks["collapsedParentShowsUnreadChild"] = model.hasUnreadCompletion(model.selectedTask!)
+            model.selectTask(first)
+            checks["readingParentDoesNotClearChildBadge"] = model.hasUnreadCompletion(model.selectedTask!)
+            model.selectTask(model.snapshot.children(of: first.id)[0])
+            checks["selectChildExpandsParentAndReadsBadge"] = !model.collapsedTaskIDs.contains(first.id) && model.selectedTask?.hasUnreadCompletion == false
+            model.selectTask(first)
             model.status(first, .doing)
             checks["manualTaskState"] = model.selectedTask?.status == .doing
             model.copyPrompt(first)

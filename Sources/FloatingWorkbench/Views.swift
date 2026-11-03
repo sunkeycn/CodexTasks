@@ -14,7 +14,7 @@ struct RootView: View {
     @State private var addingChildTo: TaskItem?
     var body: some View {
         VStack(spacing: 0) {
-            TaskSplitView(sidebar: taskList, detail: taskDetail)
+            TaskSplitView(sidebar: taskList, detail: taskDetail, initialWidth: model.sidebarWidth, onWidthChanged: model.rememberSidebarWidth)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             if let message = model.errorMessage {
                 HStack(alignment: .top, spacing: 8) {
@@ -53,42 +53,59 @@ struct RootView: View {
     private var taskList: some View {
         ScrollView {
             LazyVStack(spacing: 8) {
-                ForEach(model.snapshot.outlineTasks) { task in
-                    HStack(alignment: .top, spacing: 10) {
-                        Button { model.status(task, task.status == .done ? .todo : .done) } label: {
-                            StatusCircle(status: task.status).frame(width: 18, height: 18)
-                        }.help(task.status == .done ? "标为未开始" : "标为已完成").accessibilityLabel("切换 \(task.number) 完成状态")
-                        Button { model.selectedTaskID = task.id } label: {
-                            HStack(alignment: .top, spacing: 8) {
-                                Text(task.title).font(.system(size: 13, weight: .medium))
-                                    .lineLimit(3).fixedSize(horizontal: false, vertical: true)
-                                    .frame(maxWidth: .infinity, alignment: .leading).help(task.title)
-                            }.contentShape(Rectangle())
-                        }.accessibilityIdentifier("task-row-\(task.id)")
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 13)
-                    .background(model.selectedTaskID == task.id ? accent.opacity(0.09) : Color.white.opacity(0.75))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .padding(.leading, task.parentID == nil ? 0 : 22)
-                    .overlay(alignment: .leading) {
-                        if task.parentID != nil {
-                            Image(systemName: "arrow.turn.down.right").font(.system(size: 10))
-                                .foregroundColor(ink.opacity(0.3)).frame(width: 16)
-                        }
-                    }
-                    .contextMenu {
-                        if task.parentID == nil {
-                            Button("新建子任务") { addingChildTo = task }
-                        }
-                        Button("复制关联指令") { model.copyPrompt(task) }
-                        Button("删除任务", role: .destructive) { deleting = task }
-                    }
+                ForEach(model.visibleTasks) { task in
+                    taskRow(task)
                 }
                 if model.snapshot.tasks.isEmpty {
                     Text("还没有任务").font(.system(size: 12)).foregroundColor(.secondary).padding(.top, 16)
                 }
             }.padding(12)
         }.frame(maxHeight: .infinity).background(sidebarColor)
+    }
+    private func taskRow(_ task: TaskItem) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Button { model.status(task, task.status == .done ? .todo : .done) } label: {
+                StatusCircle(status: task.status).frame(width: 18, height: 18)
+            }.help(task.status == .done ? "标为未开始" : "标为已完成").accessibilityLabel("切换 \(task.number) 完成状态")
+            Text(task.title).font(.system(size: 13, weight: .medium))
+                .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading).help(task.title).allowsHitTesting(false)
+            if model.hasUnreadCompletion(task) {
+                Circle().fill(Color.red).frame(width: 7, height: 7).padding(.top, 5)
+                    .help("有新的会话运行完成，点击任务查看")
+                    .accessibilityLabel("有新的会话运行完成").accessibilityIdentifier("task-unread-\(task.id)")
+                    .allowsHitTesting(false)
+            }
+            if !model.snapshot.children(of: task.id).isEmpty {
+                Button { model.toggleExpanded(task) } label: {
+                    Image(systemName: model.collapsedTaskIDs.contains(task.id) ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                        .frame(width: 18, height: 18).contentShape(Rectangle())
+                }.help(model.collapsedTaskIDs.contains(task.id) ? "展开子任务" : "折叠子任务")
+                    .accessibilityLabel(model.collapsedTaskIDs.contains(task.id) ? "展开子任务" : "折叠子任务")
+                    .accessibilityIdentifier("task-disclosure-\(task.id)")
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 13)
+        .background {
+            Button { model.selectTask(task) } label: {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(model.selectedTaskID == task.id ? accent.opacity(0.09) : Color.white.opacity(0.75))
+                    .contentShape(RoundedRectangle(cornerRadius: 10))
+            }.buttonStyle(.plain).accessibilityLabel(task.title).accessibilityIdentifier("task-row-\(task.id)")
+        }
+        .padding(.leading, task.parentID == nil ? 0 : 22)
+        .overlay(alignment: .leading) {
+            if task.parentID != nil {
+                Image(systemName: "arrow.turn.down.right").font(.system(size: 10))
+                    .foregroundColor(ink.opacity(0.3)).frame(width: 16).allowsHitTesting(false)
+            }
+        }
+        .contextMenu {
+            if task.parentID == nil { Button("新建子任务") { addingChildTo = task } }
+            Button("复制关联指令") { model.copyPrompt(task) }
+            Button("删除任务", role: .destructive) { deleting = task }
+        }
     }
     @ViewBuilder private var taskDetail: some View {
         if let task = model.selectedTask {
@@ -183,33 +200,30 @@ private struct TaskDetailView: View {
     @FocusState private var titleFocused: Bool
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(spacing: 10) {
-                        TextField("任务名称", text: $title, axis: .vertical).textFieldStyle(.plain)
-                            .lineLimit(1...4).help(title)
-                            .font(.system(size: 22, weight: .bold))
-                            .focused($titleFocused).onSubmit { saveTitle(); titleFocused = false }
-                            .onChange(of: titleFocused) { focused in if !focused { saveTitle() } }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .accessibilityIdentifier("task-title")
-                        Button { model.copyPrompt(task); copied = true } label: { TaskNumberTag(number: task.number) }
-                            .help(copied ? "已复制关联指令" : "复制关联指令")
-                        Spacer(minLength: 0)
-                    }
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 16) { statusControls; taskActions }
-                        VStack(alignment: .leading, spacing: 10) { statusControls; taskActions }
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 10) {
+                    titleEditor
+                    Button { model.copyPrompt(task); copied = true } label: { TaskNumberTag(number: task.number) }
+                        .padding(.top, 4).help(copied ? "已复制关联指令" : "复制关联指令")
+                    Spacer(minLength: 4)
+                    if task.parentID == nil {
+                        Button(action: onAddSubtask) {
+                            Label("子任务", systemImage: "plus").font(.system(size: 12)).foregroundColor(accent)
+                                .padding(.horizontal, 10).padding(.vertical, 7).background(accent.opacity(0.08)).cornerRadius(7)
+                        }.fixedSize().help("创建子任务").accessibilityIdentifier("add-subtask")
                     }
                 }
-                Button { showingSessions.toggle() } label: {
-                    Image(systemName: "plus").font(.system(size: 13, weight: .medium)).foregroundColor(accent)
-                        .frame(width: 30, height: 30).background(accent.opacity(0.08)).clipShape(Circle())
-                }
-                .help("为任务关联更多 Codex 会话").accessibilityLabel("关联会话")
-                .accessibilityIdentifier("attach-session")
-                .popover(isPresented: $showingSessions, arrowEdge: .bottom) {
-                    SessionPicker(model: model, task: task).frame(width: 380, height: 380)
+                HStack(spacing: 12) {
+                    statusControls
+                    Spacer(minLength: 8)
+                    Button(action: onDelete) { Image(systemName: "trash").font(.system(size: 12)).foregroundColor(.secondary) }
+                        .help("删除任务").accessibilityLabel("删除任务").accessibilityIdentifier("delete-task")
+                    Button("关联会话") { showingSessions.toggle() }
+                        .font(.system(size: 12, weight: .medium)).foregroundColor(accent).fixedSize()
+                        .help("为任务关联更多 Codex 会话").accessibilityIdentifier("attach-session")
+                        .popover(isPresented: $showingSessions, arrowEdge: .bottom) {
+                            SessionPicker(model: model, task: task).frame(width: 380, height: 380)
+                        }
                 }
             }
             ScrollView {
@@ -236,7 +250,7 @@ private struct TaskDetailView: View {
                     if model.snapshot.sessions(for: task.id).isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("还没有关联的 Codex Session").font(.system(size: 13, weight: .semibold))
-                            Text("点击右上角 ＋ 选择会话，或在任意 Codex 聊天中发送：")
+                            Text("点击“关联会话”选择，或在任意 Codex 聊天中发送：")
                                 .font(.system(size: 12)).foregroundColor(.secondary)
                             HStack(spacing: 8) {
                                 Button { model.copyPrompt(task); copied = true } label: {
@@ -267,16 +281,16 @@ private struct TaskDetailView: View {
             }
         }.padding(2).background(Color.black.opacity(0.045)).cornerRadius(7).fixedSize()
     }
-    private var taskActions: some View {
-        HStack(spacing: 16) {
-            if task.parentID == nil {
-                Button(action: onAddSubtask) {
-                    Label("子任务", systemImage: "plus").font(.system(size: 12)).foregroundColor(accent)
-                }.help("新建子任务").accessibilityIdentifier("add-subtask")
-            }
-            Button(action: onDelete) { Label("删除", systemImage: "trash").font(.system(size: 12)).foregroundColor(.secondary) }
-                .accessibilityIdentifier("delete-task")
-        }.fixedSize()
+    private var titleEditor: some View {
+        Text(title.isEmpty ? "任务名称" : title).font(.system(size: 22, weight: .bold))
+            .lineLimit(4).fixedSize(horizontal: false, vertical: true).hidden()
+            .overlay(alignment: .topLeading) {
+                TextField("任务名称", text: $title, axis: .vertical).textFieldStyle(.plain)
+                    .lineLimit(1...4).help(title).font(.system(size: 22, weight: .bold))
+                    .focused($titleFocused).onSubmit { saveTitle(); titleFocused = false }
+                    .onChange(of: titleFocused) { focused in if !focused { saveTitle() } }
+                    .accessibilityIdentifier("task-title")
+            }.layoutPriority(1)
     }
     private func saveTitle() { if !title.isEmpty { model.rename(task, title) } }
 }
