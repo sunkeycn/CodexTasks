@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "checks": {
+    "sidebarDividerDraggedFrom229To355": true,
+    "longTaskTitleWrapsInDetailAndHasFullTooltip": true,
+    "returnCreatesTaskAndClearsInputWithoutAddButton": true,
+    "firstSelectionKeepsPopoverOpen": true,
+    "secondSelectionKeepsBothSelectionsAndStableRows": true,
+    "clickOutsideDismissesPopover": true
+  },
+  "method": "Native app interaction through CUA with isolated demo data and a separate test bundle; no live task database modified."
+}

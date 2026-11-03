@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 import LiteCore
 
 // Preserve the full version's visual language; the wireframe specifies layout only.
@@ -14,10 +13,9 @@ struct RootView: View {
     @State private var deleting: TaskItem?
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 0) {
-                taskList.frame(width: 220)
-                Divider()
-                taskDetail.frame(maxWidth: .infinity, maxHeight: .infinity)
+            HSplitView {
+                taskList.frame(minWidth: 180, idealWidth: 260, maxWidth: 440)
+                taskDetail.frame(minWidth: 340, maxWidth: .infinity, maxHeight: .infinity)
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
             if let message = model.errorMessage {
                 HStack(alignment: .top, spacing: 8) {
@@ -34,10 +32,6 @@ struct RootView: View {
                     .textFieldStyle(.plain).focused($quickFocused).onSubmit { model.addTask() }
                     .accessibilityLabel("快速记录一个任务").accessibilityIdentifier("quick-task-input")
                 Text("↩ 新建").font(.caption).foregroundColor(.secondary)
-                Button("添加") { model.addTask(); quickFocused = true }
-                    .buttonStyle(.borderedProminent).tint(accent)
-                    .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .help("创建任务并复制关联指令（回车）").accessibilityLabel("创建任务")
             }
             .padding(.horizontal, 20).padding(.vertical, 13).background(Color.white)
         }
@@ -54,14 +48,15 @@ struct RootView: View {
         ScrollView {
             LazyVStack(spacing: 8) {
                 ForEach(model.snapshot.tasks) { task in
-                    HStack(spacing: 10) {
+                    HStack(alignment: .top, spacing: 10) {
                         Button { model.status(task, task.status == .done ? .todo : .done) } label: {
                             StatusCircle(status: task.status).frame(width: 18, height: 18)
                         }.help(task.status == .done ? "标为未开始" : "标为已完成").accessibilityLabel("切换 \(task.number) 完成状态")
                         Button { model.selectedTaskID = task.id } label: {
-                            HStack(spacing: 8) {
+                            HStack(alignment: .top, spacing: 8) {
                                 Text(task.title).font(.system(size: 13, weight: .medium))
-                                    .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+                                    .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading).help(task.title)
                                 TaskNumberTag(number: task.number)
                             }.contentShape(Rectangle())
                         }.accessibilityIdentifier("task-row-\(task.id)")
@@ -144,11 +139,12 @@ private struct TaskDetailView: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 10) {
-                        TextField("任务名称", text: $title).textFieldStyle(.plain)
+                        TextField("任务名称", text: $title, axis: .vertical).textFieldStyle(.plain)
+                            .lineLimit(1...4).help(title)
                             .font(.system(size: 22, weight: .bold))
                             .focused($titleFocused).onSubmit { saveTitle(); titleFocused = false }
                             .onChange(of: titleFocused) { focused in if !focused { saveTitle() } }
-                            .frame(minWidth: 40, maxWidth: min(360, max(40, (title as NSString).size(withAttributes: [.font: NSFont.boldSystemFont(ofSize: 22)]).width + 8)))
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .accessibilityIdentifier("task-title")
                         Button { model.copyPrompt(task); copied = true } label: { TaskNumberTag(number: task.number) }
                             .help(copied ? "已复制关联指令" : "复制关联指令")
@@ -228,15 +224,22 @@ private struct TaskDetailView: View {
 private struct SessionPicker: View {
     @ObservedObject var model: AppModel
     let task: TaskItem
-    @Environment(\.dismiss) private var dismiss
     @State private var search = ""
     @State private var moving: ObservedSession?
     @State private var copied = false
     private var filtered: [ObservedSession] {
-        model.observations.filter { session in
-            !model.snapshot.sessions(for: task.id).contains { $0.id == session.id }
-                && (search.isEmpty || session.title.localizedCaseInsensitiveContains(search))
-        }
+        model.observations.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) }
+    }
+    private func attachment(for session: ObservedSession) -> SessionItem? {
+        model.snapshot.sessions.first { $0.id == session.id }
+    }
+    private func isSelected(_ session: ObservedSession) -> Bool {
+        attachment(for: session)?.taskID == task.id
+    }
+    private func toggle(_ session: ObservedSession) {
+        if let current = attachment(for: session), current.taskID == task.id { model.detach(current) }
+        else if let current = attachment(for: session), current.taskID != nil { moving = session }
+        else { model.attach(session, to: task) }
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -246,26 +249,29 @@ private struct SessionPicker: View {
                 Spacer()
                 Button("打开 Codex") { model.copyPrompt(task); model.showCodex() }.foregroundColor(accent)
             }.font(.system(size: 12))
-            Text("同一任务可关联多个聊天；在新聊天中发送关联指令即可添加。")
+            Text("可连续勾选多个会话，再次点击取消关联；点击弹窗外部收起。")
                 .font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
             TextField("搜索本机全部会话", text: $search).textFieldStyle(.roundedBorder)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(filtered) { session in
-                        Button {
-                            if model.snapshot.sessions.contains(where: { $0.id == session.id && $0.taskID != nil && $0.taskID != task.id }) { moving = session }
-                            else { model.attach(session, to: task); dismiss() }
-                        } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(session.title).font(.system(size: 12, weight: .medium)).lineLimit(2).multilineTextAlignment(.leading)
-                                HStack {
-                                    SessionStatusTag(status: session.status)
-                                    if let current = model.snapshot.sessions.first(where: { $0.id == session.id })?.taskID {
-                                        Text("已关联 " + String(format: "T#%02lld", current)).font(.system(size: 10)).foregroundColor(.secondary)
+                        Button { toggle(session) } label: {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: isSelected(session) ? "checkmark.square.fill" : "square")
+                                    .font(.system(size: 16)).foregroundColor(isSelected(session) ? accent : .gray.opacity(0.6))
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(session.title).font(.system(size: 12, weight: .medium)).lineLimit(2).multilineTextAlignment(.leading)
+                                    HStack {
+                                        SessionStatusTag(status: session.status)
+                                        if let current = attachment(for: session)?.taskID, current != task.id {
+                                            Text("已关联 " + String(format: "T#%02lld", current)).font(.system(size: 10)).foregroundColor(.secondary)
+                                        }
                                     }
                                 }
-                            }.frame(maxWidth: .infinity, alignment: .leading).padding(12).taskCard()
+                            }.frame(maxWidth: .infinity, alignment: .leading).padding(12).taskCard(selected: isSelected(session))
                         }
+                        .accessibilityIdentifier("session-choice-\(session.id)")
+                        .accessibilityValue(isSelected(session) ? "已关联" : "未关联")
                     }
                     if filtered.isEmpty { Text(model.pickerMessage ?? "没有匹配的会话。可在 Codex 新建聊天后发送关联指令。").font(.system(size: 12)).foregroundColor(.secondary).padding(.vertical, 8) }
                 }.padding(1)
@@ -273,16 +279,16 @@ private struct SessionPicker: View {
         }.padding(16).foregroundColor(ink).background(canvas).preferredColorScheme(.light).tint(accent).buttonStyle(.plain)
         .onAppear { model.scheduleRead(delay: 0) }
         .confirmationDialog("将会话移到 \(task.number)？", isPresented: Binding(get: { moving != nil }, set: { if !$0 { moving = nil } }), titleVisibility: .visible) {
-            Button("移动关联") { if let session = moving { model.attach(session, to: task) }; moving = nil; dismiss() }
+            Button("移动关联") { if let session = moving { model.attach(session, to: task) }; moving = nil }
             Button("取消", role: .cancel) { moving = nil }
         } message: { Text("该会话会从原任务移出，原任务的其他会话不受影响。") }
     }
 }
 
 private extension View {
-    func taskCard() -> some View {
-        background(Color.white).cornerRadius(10)
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.black.opacity(0.05), lineWidth: 1))
+    func taskCard(selected: Bool = false) -> some View {
+        background(selected ? accent.opacity(0.045) : Color.white).cornerRadius(10)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(selected ? accent.opacity(0.3) : Color.black.opacity(0.05), lineWidth: 1))
     }
 }
 

@@ -12,6 +12,7 @@ final class TaskPanel: NSPanel {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var panel: TaskPanel!
+    private var sidebarWidthInitialized = false
     private var model: AppModel!
     private var statusItem: NSStatusItem!
     private var hotKey: EventHotKeyRef?
@@ -31,7 +32,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let isolated = smokePath != nil || CommandLine.arguments.contains("--demo")
             let preferences = isolated ? UserDefaults(suiteName: "ai.sunkey.codextasks.lite.smoke")! : .standard
             if isolated { if try store.snapshot().tasks.isEmpty { try seed(store) } }
-            model = try AppModel(store: store, preferences: preferences)
+            let fixtures: [ObservedSession] = isolated ? [
+                ObservedSession(id: "00000000-0000-4000-8000-000000000001", title: "Codex Session", status: .running),
+                ObservedSession(id: "00000000-0000-4000-8000-000000000002", title: "Codex Session", status: .completed),
+                ObservedSession(id: "00000000-0000-4000-8000-000000000003", title: "梳理任务交互与长标题展示"),
+                ObservedSession(id: "00000000-0000-4000-8000-000000000004", title: "检查多会话关联流程")
+            ] : []
+            model = try AppModel(store: store, preferences: preferences, initialObservations: fixtures)
             if isolated { model.selectedTaskID = model.snapshot.tasks.first?.id }
             configureMenu(); configureWindow(); registerHotKey()
             signal(SIGTERM, SIG_IGN)
@@ -98,7 +105,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }, 1, &type, Unmanaged.passUnretained(self).toOpaque(), &hotKeyHandler)
         RegisterEventHotKey(UInt32(kVK_Space), UInt32(cmdKey | shiftKey), EventHotKeyID(signature: 0x43544C54, id: 1), GetApplicationEventTarget(), 0, &hotKey)
     }
-    @objc func showWindow() { panel.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
+    @objc func showWindow() {
+        panel.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        if !sidebarWidthInitialized, let content = panel.contentView {
+            content.layoutSubtreeIfNeeded()
+            if let split = findSplitView(in: content) {
+                split.setPosition(260, ofDividerAt: 0)
+                sidebarWidthInitialized = true
+            }
+        }
+    }
+    private func findSplitView(in view: NSView) -> NSSplitView? {
+        if let split = view as? NSSplitView { return split }
+        for child in view.subviews { if let split = findSplitView(in: child) { return split } }
+        return nil
+    }
     @objc private func quickTask() { showWindow(); NotificationCenter.default.post(name: .focusQuickTask, object: nil) }
     func windowShouldClose(_ sender: NSWindow) -> Bool { panel.orderOut(nil); return false }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showWindow(); return true }
@@ -110,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     private func seed(_ store: TaskStore) throws {
         let first = try store.createTask(title: "任务1")
-        _ = try store.createTask(title: "任务2")
+        _ = try store.createTask(title: "优化任务与多个 Codex 会话的关联体验，并验证侧栏宽度调整与长标题的完整展示")
         try store.attach(ObservedSession(id: "00000000-0000-4000-8000-000000000001", title: "Codex Session", status: .running), to: first)
         try store.attach(ObservedSession(id: "00000000-0000-4000-8000-000000000002", title: "Codex Session", status: .completed), to: first)
     }

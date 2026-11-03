@@ -24,8 +24,9 @@ final class AppModel: ObservableObject {
     var sessions: [SessionItem] { selectedTaskID.map { snapshot.sessions(for: $0) } ?? [] }
     var pickerMessage: String? { sessionReadError }
 
-    init(store: TaskStore, preferences: UserDefaults = .standard, reader: CodexReader = CodexReader()) throws {
+    init(store: TaskStore, preferences: UserDefaults = .standard, reader: CodexReader = CodexReader(), initialObservations: [ObservedSession] = []) throws {
         self.store = store; self.preferences = preferences; self.reader = reader
+        self.observations = initialObservations
         self.draft = preferences.string(forKey: "lite.quickDraft") ?? ""
         snapshot = try store.snapshot(); selectedTaskID = snapshot.tasks.first?.id
     }
