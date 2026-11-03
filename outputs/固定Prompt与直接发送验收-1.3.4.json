@@ -1,0 +1,34 @@
+{
+  "version": "1.3.4",
+  "build": "10",
+  "coreTests": {
+    "total": 39,
+    "passed": true
+  },
+  "windowTests": {
+    "total": 42,
+    "passed": true
+  },
+  "hookTests": {
+    "total": 3,
+    "passed": true
+  },
+  "architectures": {
+    "app": [
+      "x86_64",
+      "arm64"
+    ],
+    "helper": [
+      "x86_64",
+      "arm64"
+    ]
+  },
+  "observedUI": {
+    "task": "T#04",
+    "headerReadOnly": true,
+    "bodyHasNoDuplicateHeader": true,
+    "threeBodyItemsPreserved": true
+  },
+  "dispatchValidation": "Simulated CLI process: exact stdin and arguments, session binding, large output, failure and missing workspace/executable. No live business task submitted.",
+  "automaticRelaunchVerified": true
+}

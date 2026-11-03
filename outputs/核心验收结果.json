@@ -1,0 +1,218 @@
+{
+  "failed" : 0,
+  "passed" : true,
+  "platform" : "Version 26.6.2 (Build 25G83)",
+  "tests" : [
+    {
+      "name" : "testDeleteTaskCleansLocalRelationsAndKeepsNumbersAndPipelines",
+      "passed" : true,
+      "seconds" : 0.026264071464538574
+    },
+    {
+      "name" : "testHTTPBridgeAuthenticationLimitsAndCleanup",
+      "passed" : true,
+      "seconds" : 0.089681029319763184
+    },
+    {
+      "name" : "testHTTPHookScriptToTargetedReaderAndService",
+      "passed" : true,
+      "seconds" : 0.8776620626449585
+    },
+    {
+      "name" : "testNativeHTTPHookToTargetedReaderAndService",
+      "passed" : true,
+      "seconds" : 0.40956604480743408
+    },
+    {
+      "name" : "testHookSidecarLifecycleAndBoundaries",
+      "passed" : true,
+      "seconds" : 0.046945095062255859
+    },
+    {
+      "name" : "testGitInspectionFollowsBranchAndRejectsExternalGitDirectory",
+      "passed" : true,
+      "seconds" : 2.3385061025619507
+    },
+    {
+      "name" : "testRealSessionBindingAndDynamicProjects",
+      "passed" : true,
+      "seconds" : 0.015179038047790527
+    },
+    {
+      "name" : "testRealSessionOneToOneAndStaleCommands",
+      "passed" : true,
+      "seconds" : 0.0091309547424316406
+    },
+    {
+      "name" : "testManualProjectMatchesAutomaticWorkspace",
+      "passed" : true,
+      "seconds" : 0.010710954666137695
+    },
+    {
+      "name" : "testWorkspaceIsolationPersistenceAndLegacyData",
+      "passed" : true,
+      "seconds" : 0.034368991851806641
+    },
+    {
+      "name" : "testWorkspaceMaintenanceBoundariesAndArchiveRestore",
+      "passed" : true,
+      "seconds" : 0.02818000316619873
+    },
+    {
+      "name" : "testWorkspaceCorruptRegistryIsPreserved",
+      "passed" : true,
+      "seconds" : 0.0044969320297241211
+    },
+    {
+      "name" : "testCodexPromptDeepLinkAndWorkspaceMetadataIsolation",
+      "passed" : true,
+      "seconds" : 0.0098160505294799805
+    },
+    {
+      "name" : "testCodexDispatchExecutesExactPromptAndBindsSession",
+      "passed" : true,
+      "seconds" : 0.28096199035644531
+    },
+    {
+      "name" : "testCodexDispatchReportsFailuresWithoutPretendingToSend",
+      "passed" : true,
+      "seconds" : 0.21864891052246094
+    },
+    {
+      "name" : "testLargeSessionPublishesRecentStateBeforeHistory",
+      "passed" : true,
+      "seconds" : 3.0681329965591431
+    },
+    {
+      "name" : "testLocalReaderCommandsIncrementalAndScope",
+      "passed" : true,
+      "seconds" : 0.01359093189239502
+    },
+    {
+      "name" : "testStableNumbersCompletionAndReopen",
+      "passed" : true,
+      "seconds" : 0.23627901077270508
+    },
+    {
+      "name" : "testConcurrentNumberAllocationAcrossConnections",
+      "passed" : true,
+      "seconds" : 0.46078503131866455
+    },
+    {
+      "name" : "testWriteFailureLeavesTrustedStateAndDraft",
+      "passed" : true,
+      "seconds" : 0.010807037353515625
+    },
+    {
+      "name" : "testVersionConflictDoesNotOverwriteOtherEdit",
+      "passed" : true,
+      "seconds" : 0.0093740224838256836
+    },
+    {
+      "name" : "testCompletionRetryIsIdempotent",
+      "passed" : true,
+      "seconds" : 0.0094330310821533203
+    },
+    {
+      "name" : "testRunsAndPipelinesNeverChangeManualCompletion",
+      "passed" : true,
+      "seconds" : 0.012668013572692871
+    },
+    {
+      "name" : "testConcurrentRunsAggregateAndLateEventsDoNotRevive",
+      "passed" : true,
+      "seconds" : 0.011744976043701172
+    },
+    {
+      "name" : "testEventIdempotenceMismatchAndNoticeDeduplication",
+      "passed" : true,
+      "seconds" : 0.0099049806594848633
+    },
+    {
+      "name" : "testRecoveryUnknownRetainsTimestampAndCanReconcile",
+      "passed" : true,
+      "seconds" : 0.012902021408081055
+    },
+    {
+      "name" : "testFollowAndLinkAreIndependentWithUndoDefaults",
+      "passed" : true,
+      "seconds" : 0.0097459554672241211
+    },
+    {
+      "name" : "testUndoDoesNotOverwriteLaterUserChanges",
+      "passed" : true,
+      "seconds" : 0.0096600055694580078
+    },
+    {
+      "name" : "testResolveCurrentProjectPriorityAndAmbiguity",
+      "passed" : true,
+      "seconds" : 0.012508034706115723
+    },
+    {
+      "name" : "testResolveRejectsUnauthorizedAndPlainNumberAndUnrelatedContext",
+      "passed" : true,
+      "seconds" : 0.0096919536590576172
+    },
+    {
+      "name" : "testBranchUnknownRetainsHistoryAndBlocksResolution",
+      "passed" : true,
+      "seconds" : 0.010144948959350586
+    },
+    {
+      "name" : "testSessionReattachmentDoesNotMoveRunHistory",
+      "passed" : true,
+      "seconds" : 0.010609030723571777
+    },
+    {
+      "name" : "testSuggestionAdoptionConcurrentAndNoAutomaticRun",
+      "passed" : true,
+      "seconds" : 0.016474008560180664
+    },
+    {
+      "name" : "testFixedSHAAndPreviewInvalidation",
+      "passed" : true,
+      "seconds" : 0.017042040824890137
+    },
+    {
+      "name" : "testChangedParametersOrEnvironmentInvalidatePreviousPreview",
+      "passed" : true,
+      "seconds" : 0.010246992111206055
+    },
+    {
+      "name" : "testConcurrentConfirmationOnlySubmitsOnceAndSurvivesRestart",
+      "passed" : true,
+      "seconds" : 0.022895932197570801
+    },
+    {
+      "name" : "testProductionAndUnknownEnvironmentRejected",
+      "passed" : true,
+      "seconds" : 0.0088930130004882812
+    },
+    {
+      "name" : "testBackupPreservesIdentityHistoryAndCounter",
+      "passed" : true,
+      "seconds" : 0.02566993236541748
+    },
+    {
+      "name" : "testFutureSchemaRefusedAndCorruptionNotOverwritten",
+      "passed" : true,
+      "seconds" : 0.0098450183868408203
+    },
+    {
+      "name" : "testSeedIsIdempotentAndQuickEntryAtomic",
+      "passed" : true,
+      "seconds" : 0.011651992797851562
+    },
+    {
+      "name" : "testAdapterAuthorizationAndRestrictedAutomationSurface",
+      "passed" : true,
+      "seconds" : 0.011831998825073242
+    },
+    {
+      "name" : "testUnknownLegacySchemaBackedUpBeforeRefusal",
+      "passed" : true,
+      "seconds" : 0.011019110679626465
+    }
+  ],
+  "total" : 42
+}

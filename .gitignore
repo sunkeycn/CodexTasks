@@ -1,0 +1,5 @@
+.build/
+.DS_Store
+work/
+outputs/*.app/
+outputs/*.zip
