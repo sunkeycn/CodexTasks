@@ -93,4 +93,8 @@ UNIVERSAL=1 ./scripts/build-app.sh
 
 测试使用临时数据和合成 Codex 索引／日志，不操作真实用户会话。窗口截图中的示例任务只存在于隔离验收目录。支持 Intel / Apple Silicon，最低 macOS 13，应用使用本地 ad-hoc 签名。
 
-配置项与兼容性常量的检查结果见 [配置审计](docs/CONFIGURATION.md)。仓库尚未指定开源许可证，公开分发前由维护者选择并添加 `LICENSE`。
+配置项与兼容性常量的检查结果见 [配置审计](docs/CONFIGURATION.md)。
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)，版权归属 `Copyright (c) 2026 sunkeycn`。允许使用、修改、商业使用和分发；分发时须保留版权及许可声明。完整条款以 `LICENSE` 为准，应用包中也包含同一许可证。

@@ -12,6 +12,7 @@ APP_DIRECTORY="$STAGING_DIRECTORY/Codex Tasks.app"
 mkdir -p "$APP_DIRECTORY/Contents/MacOS" "$APP_DIRECTORY/Contents/Resources" "$APP_DIRECTORY/Contents/Helpers"
 cp "$BINARY_DIRECTORY/FloatingWorkbench" "$APP_DIRECTORY/Contents/MacOS/FloatingWorkbench"
 cp "$BINARY_DIRECTORY/CodexTasksHook" "$APP_DIRECTORY/Contents/Helpers/CodexTasksHook"
+cp "$TASK_ROOT/LICENSE" "$APP_DIRECTORY/Contents/Resources/LICENSE.txt"
 if [[ "${UNIVERSAL:-0}" == "1" ]]; then
   swift build -c "$BUILD_CONFIGURATION" --triple arm64-apple-macosx13.0 --product FloatingWorkbench
   swift build -c "$BUILD_CONFIGURATION" --triple x86_64-apple-macosx13.0 --product FloatingWorkbench
@@ -52,6 +53,7 @@ codesign --verify --deep --strict "$APP_DIRECTORY"
 /usr/bin/ditto -x -k "$STAGING_DIRECTORY/Codex-Tasks-macOS.zip" "$STAGING_DIRECTORY/verified"
 codesign --verify --strict "$STAGING_DIRECTORY/verified/Codex Tasks.app/Contents/Helpers/CodexTasksHook"
 codesign --verify --deep --strict "$STAGING_DIRECTORY/verified/Codex Tasks.app"
+cmp "$TASK_ROOT/LICENSE" "$STAGING_DIRECTORY/verified/Codex Tasks.app/Contents/Resources/LICENSE.txt"
 if [[ "${RELAUNCH:-1}" == "1" ]]; then
   swift "$TASK_ROOT/scripts/manage-app.swift" stop "$APP_DIRECTORY"
 fi
