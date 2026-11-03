@@ -38,6 +38,18 @@ import LiteCore
     checks["settingsModelRemovesOnlyItsHooks"] = model.hookInspection?.installedEvents.isEmpty == true
     checks["settingsCanSwitchDirectoryAfterRemoval"] = model.applySettings(changedHome) && model.errorMessage == nil
     checks["settingsTaskDatabaseUnchanged"] = try store.snapshot().tasks.count == 1
+    checks["functionKeyUsesNativeMenuEquivalent"] = WindowShortcut(keyCode: 122, key: "F1").keyEquivalent == "\u{f704}"
+    var shortcutApplied: WindowShortcut?
+    model.applyWindowShortcut = { shortcutApplied = $0 }
+    var custom = model.settings
+    custom.windowShortcut = WindowShortcut(keyCode: 40, key: "K", command: true, shift: true)
+    checks["shortcutSaveAppliesImmediately"] = model.applySettings(custom) && shortcutApplied == custom.windowShortcut
+    checks["shortcutSurvivesRestart"] = try AppModel(store: store, preferences: preferences).settings.windowShortcut == custom.windowShortcut
+    model.applyWindowShortcut = { _ in throw LiteError.message("模拟快捷键占用") }
+    var conflict = custom; conflict.windowShortcut = WindowShortcut(keyCode: 37, key: "L")
+    checks["shortcutConflictKeepsPreviousSettings"] = try !model.applySettings(conflict) && model.settings == custom && settingsStore.load() == custom
+    model.applyWindowShortcut = { _ in }
+    checks["shortcutRecoversAfterConflict"] = model.applySettings(custom)
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 620), styleMask: [.titled, .closable], backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
     let view = NSHostingView(rootView: SettingsView(model: model, onClose: {}))

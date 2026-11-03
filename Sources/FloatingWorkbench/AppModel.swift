@@ -10,6 +10,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var collapsedTaskIDs: Set<Int64> = [] {
         didSet { preferences.set(collapsedTaskIDs.sorted().map(String.init), forKey: "lite.collapsedTasks") }
     }
+    @Published var isRecordingShortcut = false
+    var applyWindowShortcut: ((WindowShortcut) throws -> Void)?
     @Published var errorMessage: String?
     @Published var draft: String { didSet { preferences.set(draft, forKey: "lite.quickDraft") } }
     let store: TaskStore
@@ -103,7 +105,14 @@ final class AppModel: ObservableObject {
                 let old = try hookInstaller.inspect()
                 guard old.installedEvents.isEmpty && old.legacyHandlers == 0 else { throw LiteError.message("请先移除旧目录中的 Codex Tasks Hooks，再切换 Codex 数据目录。") }
             }
-            try settingsStore.save(validated)
+            let previousShortcut = settings.windowShortcut
+            let shortcutChanged = previousShortcut != validated.windowShortcut
+            if shortcutChanged { try applyWindowShortcut?(validated.windowShortcut) }
+            do { try settingsStore.save(validated) }
+            catch {
+                if shortcutChanged { try? applyWindowShortcut?(previousShortcut) }
+                throw error
+            }
             let wasRunning = !stopped
             stop(); settings = validated
             reader = CodexReader(home: validated.homeURL, runningTimeout: validated.runningTimeout)
@@ -230,12 +239,14 @@ final class AppModel: ObservableObject {
     var resolvedCodexApplication: URL? {
         settings.applicationURL ?? URL(string: "codex://").flatMap { NSWorkspace.shared.urlForApplication(toOpen: $0) }
     }
-    func showCodex() {
-        guard let app = resolvedCodexApplication else {
-            errorMessage = "未找到 Codex 应用，请先启动 Codex，再发送关联指令。"; return
-        }
-        NSWorkspace.shared.openApplication(at: app, configuration: .init()) { _, error in
-            if let error { Task { @MainActor in self.errorMessage = error.localizedDescription } }
+    func createSession(for task: TaskItem) {
+        let url = task.newSessionURL
+        if let app = resolvedCodexApplication {
+            NSWorkspace.shared.open([url], withApplicationAt: app, configuration: .init()) { _, error in
+                if error != nil { Task { @MainActor in self.errorMessage = "无法创建 Codex 会话，请检查设置中的应用位置。" } }
+            }
+        } else if !NSWorkspace.shared.open(url) {
+            errorMessage = "未找到 Codex 应用，请在设置中选择 Codex。"
         }
     }
 }

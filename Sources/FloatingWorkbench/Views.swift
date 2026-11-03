@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import LiteCore
 
@@ -7,16 +8,47 @@ private let accent = Color(red: 0.18, green: 0.39, blue: 0.86)
 private let canvas = Color(red: 0.975, green: 0.976, blue: 0.98)
 private let sidebarColor = Color(red: 0.945, green: 0.953, blue: 0.969)
 
+@MainActor final class WindowPresentation: ObservableObject {
+    @Published var isCompact = false
+    @Published var isTransitioning = false
+}
+
+private struct HeaderDragRegion: NSViewRepresentable {
+    final class DragView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+        override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
+    }
+    func makeNSView(context: Context) -> DragView { DragView() }
+    func updateNSView(_ view: DragView, context: Context) {}
+}
+
 struct RootView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject var presentation: WindowPresentation
+    let onToggleDetail: () -> Void
     @FocusState private var quickFocused: Bool
     @State private var deleting: TaskItem?
     @State private var addingChildTo: TaskItem?
     var body: some View {
         VStack(spacing: 0) {
-            TaskSplitView(sidebar: taskList, detail: taskDetail, initialWidth: model.sidebarWidth, onWidthChanged: model.rememberSidebarWidth)
+            HStack(spacing: 8) {
+                Text("Codex Tasks").font(.system(size: 13, weight: .semibold)).lineLimit(1).allowsHitTesting(false)
+                Spacer(minLength: 4)
+                Button(action: onToggleDetail) {
+                    Image(systemName: presentation.isCompact ? "chevron.right" : "chevron.left")
+                        .font(.system(size: 11, weight: .semibold)).foregroundColor(accent)
+                        .frame(width: 28, height: 24).contentShape(Rectangle())
+                }.help(presentation.isCompact ? "展开详情" : "收起详情")
+                    .accessibilityLabel(presentation.isCompact ? "展开详情" : "收起详情")
+                    .accessibilityIdentifier("toggle-task-detail")
+                    .disabled(presentation.isTransitioning)
+            }.padding(.leading, 80).padding(.trailing, 8).frame(height: 36)
+                .background(HeaderDragRegion()).background(sidebarColor)
+            TaskSplitView(sidebar: taskList, detail: taskDetail, initialWidth: model.sidebarWidth,
+                          isCompact: presentation.isCompact, isTransitioning: presentation.isTransitioning,
+                          onWidthChanged: model.rememberSidebarWidth)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if let message = model.errorMessage {
+            if !presentation.isCompact, let message = model.errorMessage {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
                     Text(message).font(.system(size: 12)).textSelection(.enabled)
@@ -24,19 +56,23 @@ struct RootView: View {
                     Button { model.errorMessage = nil } label: { Image(systemName: "xmark").foregroundColor(.secondary) }.help("关闭提示")
                 }.padding(12).background(Color.orange.opacity(0.09))
             }
-            Divider()
-            HStack(spacing: 12) {
-                Image(systemName: "plus.circle.fill").foregroundColor(accent).font(.title3)
-                TextField("快速记录一个任务…", text: $model.draft)
-                    .textFieldStyle(.plain).focused($quickFocused).onSubmit { model.addTask() }
-                    .accessibilityLabel("快速记录一个任务").accessibilityIdentifier("quick-task-input")
-                Text("↩ 新建").font(.caption).foregroundColor(.secondary)
+            if !presentation.isCompact {
+                Divider()
+                HStack(spacing: 12) {
+                    Image(systemName: "plus.circle.fill").foregroundColor(accent).font(.title3)
+                    TextField("快速记录一个任务…", text: $model.draft)
+                        .textFieldStyle(.plain).focused($quickFocused).onSubmit { model.addTask() }
+                        .accessibilityLabel("快速记录一个任务").accessibilityIdentifier("quick-task-input")
+                    Text("↩ 新建").font(.caption).foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 20).padding(.vertical, 13).background(Color.white)
             }
-            .padding(.horizontal, 20).padding(.vertical, 13).background(Color.white)
         }
         .foregroundColor(ink).background(canvas).preferredColorScheme(.light).tint(accent)
         .font(.system(size: 13)).buttonStyle(.plain)
-        .frame(minWidth: 620, minHeight: 400)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(.container, edges: .top)
+        .onChange(of: presentation.isCompact) { compact in if compact { quickFocused = false } }
         .onReceive(NotificationCenter.default.publisher(for: .focusQuickTask)) { _ in quickFocused = true }
         .sheet(item: $addingChildTo) { parent in
             SubtaskCreationView(model: model, parent: parent)
@@ -61,6 +97,7 @@ struct RootView: View {
                 }
             }.padding(12)
         }.frame(maxHeight: .infinity).background(sidebarColor)
+            .accessibilityIdentifier(presentation.isCompact ? "compact-task-list" : "task-list")
     }
     private func taskRow(_ task: TaskItem) -> some View {
         TaskCard(model: model, task: task, onSelect: { model.selectTask(task) },
@@ -92,7 +129,6 @@ private struct TaskCard: View {
     let task: TaskItem
     let onSelect: () -> Void
     let onDisclosure: () -> Void
-    var opensDetails = false
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Button { model.status(task, task.status == .done ? .todo : .done) } label: {
@@ -109,11 +145,11 @@ private struct TaskCard: View {
             }
             if !model.snapshot.children(of: task.id).isEmpty {
                 Button(action: onDisclosure) {
-                    Image(systemName: model.collapsedTaskIDs.contains(task.id) ? "chevron.right" : "chevron.down")
+                    Image(systemName: model.collapsedTaskIDs.contains(task.id) ? "chevron.down" : "chevron.up")
                         .font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
                         .frame(width: 18, height: 18).contentShape(Rectangle())
-                }.help(opensDetails ? "打开任务详情" : model.collapsedTaskIDs.contains(task.id) ? "展开子任务" : "折叠子任务")
-                    .accessibilityLabel(opensDetails ? "打开任务详情" : model.collapsedTaskIDs.contains(task.id) ? "展开子任务" : "折叠子任务")
+                }.help(model.collapsedTaskIDs.contains(task.id) ? "展开子任务" : "折叠子任务")
+                    .accessibilityLabel(model.collapsedTaskIDs.contains(task.id) ? "展开子任务" : "折叠子任务")
                     .accessibilityIdentifier("task-disclosure-\(task.id)")
             }
         }
@@ -132,36 +168,6 @@ private struct TaskCard: View {
                     .foregroundColor(ink.opacity(0.3)).frame(width: 16).allowsHitTesting(false)
             }
         }
-    }
-}
-
-struct CompactTaskView: View {
-    @ObservedObject var model: AppModel
-    let onOpenTask: (TaskItem) -> Void
-    var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 8) {
-                ForEach(model.visibleTasks) { task in
-                    TaskCard(model: model, task: task, onSelect: { onOpenTask(task) },
-                             onDisclosure: { onOpenTask(task) }, opensDetails: true)
-                }
-                if model.snapshot.tasks.isEmpty {
-                    VStack(spacing: 10) {
-                        Image(systemName: "checklist").font(.system(size: 24)).foregroundColor(accent.opacity(0.5))
-                        Text("还没有任务").font(.system(size: 13, weight: .medium))
-                        Text("⌘⇧空格 切换到正常窗口添加任务").font(.system(size: 11)).foregroundColor(.secondary)
-                    }.frame(maxWidth: .infinity).padding(.vertical, 24)
-                }
-                if let error = model.errorMessage {
-                    Text(error).font(.system(size: 11)).foregroundColor(.orange)
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(8)
-                }
-            }.padding(12)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(sidebarColor).foregroundColor(ink).tint(accent)
-        .buttonStyle(.plain).preferredColorScheme(.light)
-        .accessibilityIdentifier("compact-task-list")
     }
 }
 
@@ -364,7 +370,7 @@ private struct SessionPicker: View {
             HStack {
                 Button(copied ? "已复制关联指令" : "复制关联指令") { model.copyPrompt(task); copied = true }.foregroundColor(accent)
                 Spacer()
-                Button("打开 Codex") { model.copyPrompt(task); model.showCodex() }.foregroundColor(accent)
+                Button("创建新会话") { model.createSession(for: task) }.accessibilityIdentifier("create-codex-session").foregroundColor(accent)
             }.font(.system(size: 12))
             Text("可连续勾选多个会话，再次点击取消关联；点击弹窗外部收起。")
                 .font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)

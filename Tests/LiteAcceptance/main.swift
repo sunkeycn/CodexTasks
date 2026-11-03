@@ -34,6 +34,18 @@ check("new-schema-has-only-task-and-session", try scalar(url, "SELECT count(*) F
 check("blank-task-rejected", rejected { _ = try store.createTask(title: " \n ") })
 check("task-title-trimmed", try store.snapshot().tasks.first { $0.id == first }?.title == "任务一")
 check("display-number", try store.snapshot().tasks.first { $0.id == first }?.number == "T#01")
+let newChat = try store.snapshot().tasks.first { $0.id == first }!.newSessionURL
+let newChatParts = URLComponents(url: newChat, resolvingAgainstBaseURL: false)!
+check("new-session-deep-link", newChat.scheme == "codex" && newChat.host == "threads" && newChat.path == "/new")
+check("new-session-prefills-association-and-newline", newChatParts.queryItems == [URLQueryItem(name: "prompt", value: "关联任务【T#01】\n")])
+check("new-session-does-not-auto-send", newChatParts.queryItems?.contains { $0.name == "submit" || $0.name == "send" } == false)
+let legacySettingsJSON = Data(#"{"codexHome":"/tmp","applicationPath":"","refreshInterval":60,"runningTimeout":180}"#.utf8)
+check("legacy-settings-gains-default-shortcut", try JSONDecoder().decode(IntegrationSettings.self, from: legacySettingsJSON).windowShortcut == WindowShortcut())
+check("shortcut-rejects-unmodified-key", rejected { try WindowShortcut(keyCode: 40, key: "K", command: false, shift: false).validate() })
+check("shortcut-rejects-existing-app-menu", rejected { try WindowShortcut(keyCode: 12, key: "Q", shift: false).validate() })
+var shortcutSettings = IntegrationSettings(codexHome: "/tmp")
+shortcutSettings.windowShortcut = WindowShortcut(keyCode: 40, key: "K", command: true, shift: true, option: true)
+check("shortcut-roundtrips-all-modifiers", try JSONDecoder().decode(IntegrationSettings.self, from: JSONEncoder().encode(shortcutSettings)) == shortcutSettings)
 var a = ObservedSession(id: UUID().uuidString, title: "会话 A", status: .running, updatedAt: base.addingTimeInterval(3), taskNumber: first, commandAt: base.addingTimeInterval(1))
 var b = ObservedSession(id: UUID().uuidString, title: "会话 B", status: .completed, updatedAt: base.addingTimeInterval(3), taskNumber: first, commandAt: base.addingTimeInterval(2))
 try store.reconcile([a,b])

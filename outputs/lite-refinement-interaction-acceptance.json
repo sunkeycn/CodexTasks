@@ -1,0 +1,39 @@
+{
+  "date": "2026-11-03",
+  "version": "2.2.0 (26)",
+  "scope": "隔离数据下的原生界面交互；不更改真实任务数据库或真实快捷键设置",
+  "observed": {
+    "nativeTrafficLightsTitleAndToggleShareHeader": true,
+    "headerCollapsesAndExpandsRightPane": true,
+    "compactDisclosureKeepsCompact": true,
+    "compactChildSelectionKeepsCompact": true,
+    "expandedDetailShowsSelectedChild": true,
+    "settingsRecordsAndSavesCommandShiftK": true,
+    "newShortcutImmediatelyExpandsWindow": true,
+    "previousDefaultShortcutStopsSwitching": true,
+    "associationPopoverHasCreateNewSessionButton": true,
+    "createSessionButtonClicked": true
+  },
+  "automatedCoverage": [
+    "新会话 URL 路由、关联指令末尾换行、无 send/submit 参数",
+    "旧设置兼容、快捷键保存重载、冲突回滚",
+    "共享列表、详情隐藏显示、任务选择/子任务折叠/完成保持小窗口、左边缘和高度保留"
+  ],
+  "limitations": [
+    "Codex 外部应用被电脑使用工具访问策略阻止，未视觉检查其输入框及实际草稿内容。",
+    "跨应用物理全局快捷键三态未完整验证；已有状态机及本应用快捷键交互覆盖。"
+  ],
+  "passed": true,
+  "releaseVerification": {
+    "version": "2.2.0",
+    "build": "26",
+    "coreChecks": 126,
+    "helperChecks": 8,
+    "windowAndSettingsChecks": 67,
+    "universalAppAndHelper": true,
+    "appAndZipSignatureVerified": true,
+    "automaticallyRelaunched": true,
+    "singleOfficialInstance": true,
+    "officialHeaderAndCompactWindowVisuallyVerified": true
+  }
+}

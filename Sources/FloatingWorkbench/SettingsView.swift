@@ -18,6 +18,7 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     Text("设置").font(.system(size: 22, weight: .bold))
+                    shortcutCard
                     connectionCard
                     hooksCard
                     VStack(alignment: .leading, spacing: 8) {
@@ -47,6 +48,23 @@ struct SettingsView: View {
         .frame(width: 600, height: 620).background(Color(red: 0.975, green: 0.976, blue: 0.98))
         .foregroundColor(Color(red: 0.15, green: 0.19, blue: 0.24)).preferredColorScheme(.light)
         .onAppear { model.refreshHookInspection() }
+        .onDisappear { model.isRecordingShortcut = false }
+    }
+    private var shortcutCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("窗口形态").font(.system(size: 14, weight: .semibold))
+            HStack {
+                Text("切换快捷键").font(.system(size: 12))
+                Spacer()
+                ShortcutRecorder(shortcut: $draft.windowShortcut, model: model) { error in
+                    notice = error; noticeIsError = error != nil
+                }.frame(width: 240, height: 28)
+                Button("恢复默认") { draft.windowShortcut = WindowShortcut() }
+                    .accessibilityIdentifier("reset-window-shortcut")
+            }
+            Text("点击快捷键后按下新组合，保存后生效。依次切换隐藏、小窗口和正常窗口；右上角按钮可直接展开／收起详情。")
+                .font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+        }.padding(16).settingsCard()
     }
     private var connectionCard: some View {
         VStack(alignment: .leading, spacing: 12) {

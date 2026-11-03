@@ -67,6 +67,7 @@
     "large-log-live-tail-read-first" : true,
     "legacy-database-left-intact" : true,
     "legacy-database-rejected" : true,
+    "legacy-settings-gains-default-shortcut" : true,
     "lifecycle-event-states" : true,
     "linking-already-completed-session-does-not-badge" : true,
     "manual-binding-beats-older-automatic-command" : true,
@@ -81,6 +82,9 @@
     "move-session-leaves-other-sessions" : true,
     "moving-completed-session-does-not-badge-either-task" : true,
     "new-schema-has-only-task-and-session" : true,
+    "new-session-deep-link" : true,
+    "new-session-does-not-auto-send" : true,
+    "new-session-prefills-association-and-newline" : true,
     "new-turn-can-badge-again" : true,
     "new-turn-can-run-after-completion" : true,
     "new-user-command-can-reattach" : true,
@@ -106,6 +110,9 @@
     "settings-rejects-invalid-interval" : true,
     "settings-rejects-relative-home" : true,
     "settings-roundtrip-custom-home-and-timing" : true,
+    "shortcut-rejects-existing-app-menu" : true,
+    "shortcut-rejects-unmodified-key" : true,
+    "shortcut-roundtrips-all-modifiers" : true,
     "stale-completion-preserves-running-state" : true,
     "stale-running-event-is-unknown" : true,
     "subtask-persists-parent" : true,
@@ -120,7 +127,7 @@
     "unbound-completion-does-not-badge" : true,
     "unknown-schema-not-overwritten" : true
   },
-  "count" : 119,
+  "count" : 126,
   "failures" : [
 
   ],

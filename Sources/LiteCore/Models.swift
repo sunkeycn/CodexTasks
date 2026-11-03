@@ -16,6 +16,12 @@ public struct TaskItem: Identifiable, Equatable, Sendable {
     public var hasUnreadCompletion: Bool = false
     public var number: String { String(format: "T#%02lld", id) }
     public var associationPrompt: String { "关联任务【\(number)】" }
+    public var newSessionURL: URL {
+        var link = URLComponents()
+        link.scheme = "codex"; link.host = "threads"; link.path = "/new"
+        link.queryItems = [URLQueryItem(name: "prompt", value: associationPrompt + "\n")]
+        return link.url!
+    }
 }
 
 public enum SessionStatus: String, Codable, Sendable {

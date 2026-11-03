@@ -1,0 +1,21 @@
+{
+  "date": "2026-11-03",
+  "version": "2.2.1",
+  "build": "27",
+  "passed": true,
+  "automatedWindowChecks": 72,
+  "nativeLayoutDiagnostics": "none in isolated native smoke run",
+  "interactiveChecks": {
+    "singleChevronToggle": true,
+    "compactSquareMatchesSidebarWidth": true,
+    "compactHasNoQuickEntry": true,
+    "compactHasNoDetailPane": true,
+    "expandRestoresQuickEntryAndDetail": true,
+    "finalWindowLeftCompact": true
+  },
+  "delivery": {
+    "universalAppAndHelper": true,
+    "appAndZipSignatureVerified": true,
+    "automaticallyRelaunched": true
+  }
+}

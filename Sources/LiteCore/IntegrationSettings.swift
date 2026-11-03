@@ -5,9 +5,19 @@ public struct IntegrationSettings: Codable, Equatable, Sendable {
     public var applicationPath: String
     public var refreshInterval: Double
     public var runningTimeout: Double
-    public init(codexHome: String = IntegrationSettings.defaultCodexHome.path, applicationPath: String = "", refreshInterval: Double = 60, runningTimeout: Double = 180) {
+    public var windowShortcut: WindowShortcut
+    public init(codexHome: String = IntegrationSettings.defaultCodexHome.path, applicationPath: String = "", refreshInterval: Double = 60, runningTimeout: Double = 180, windowShortcut: WindowShortcut = WindowShortcut()) {
         self.codexHome = codexHome; self.applicationPath = applicationPath
-        self.refreshInterval = refreshInterval; self.runningTimeout = runningTimeout
+        self.refreshInterval = refreshInterval; self.runningTimeout = runningTimeout; self.windowShortcut = windowShortcut
+    }
+    private enum CodingKeys: String, CodingKey { case codexHome, applicationPath, refreshInterval, runningTimeout, windowShortcut }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        codexHome = try values.decode(String.self, forKey: .codexHome)
+        applicationPath = try values.decode(String.self, forKey: .applicationPath)
+        refreshInterval = try values.decode(Double.self, forKey: .refreshInterval)
+        runningTimeout = try values.decode(Double.self, forKey: .runningTimeout)
+        windowShortcut = try values.decodeIfPresent(WindowShortcut.self, forKey: .windowShortcut) ?? WindowShortcut()
     }
     public static var defaultCodexHome: URL {
         let configured = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? ""
@@ -17,6 +27,7 @@ public struct IntegrationSettings: Codable, Equatable, Sendable {
     public var homeURL: URL { URL(fileURLWithPath: (codexHome as NSString).expandingTildeInPath, isDirectory: true).standardizedFileURL }
     public var applicationURL: URL? { applicationPath.isEmpty ? nil : URL(fileURLWithPath: (applicationPath as NSString).expandingTildeInPath) }
     public func validated() throws -> IntegrationSettings {
+        try windowShortcut.validate()
         let path = (codexHome.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath
         guard path.hasPrefix("/") else { throw LiteError.message("Codex 数据目录需要使用绝对路径。") }
         var directory: ObjCBool = false
@@ -26,7 +37,7 @@ public struct IntegrationSettings: Codable, Equatable, Sendable {
         if !app.isEmpty {
             guard app.hasPrefix("/"), app.hasSuffix(".app"), Bundle(url: URL(fileURLWithPath: app)) != nil else { throw LiteError.message("请选择有效的 Codex 应用程序（.app），也可以留空自动识别。") }
         }
-        return IntegrationSettings(codexHome: URL(fileURLWithPath: path).standardizedFileURL.path, applicationPath: app, refreshInterval: refreshInterval, runningTimeout: runningTimeout)
+        return IntegrationSettings(codexHome: URL(fileURLWithPath: path).standardizedFileURL.path, applicationPath: app, refreshInterval: refreshInterval, runningTimeout: runningTimeout, windowShortcut: windowShortcut)
     }
 }
 
@@ -44,6 +55,7 @@ public struct IntegrationSettingsStore: Sendable {
                   settings.runningTimeout.isFinite, (30...3600).contains(settings.runningTimeout) else {
                 throw LiteError.message("设置值无效。")
             }
+            try settings.windowShortcut.validate()
             return settings
         }
         catch { throw LiteError.message("无法读取设置文件，请保留原文件并检查格式：\(url.path)") }
