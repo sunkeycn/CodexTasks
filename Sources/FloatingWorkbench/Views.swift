@@ -11,12 +11,11 @@ struct RootView: View {
     @ObservedObject var model: AppModel
     @FocusState private var quickFocused: Bool
     @State private var deleting: TaskItem?
+    @State private var addingChildTo: TaskItem?
     var body: some View {
         VStack(spacing: 0) {
-            HSplitView {
-                taskList.frame(minWidth: 180, idealWidth: 260, maxWidth: 440)
-                taskDetail.frame(minWidth: 340, maxWidth: .infinity, maxHeight: .infinity)
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            TaskSplitView(sidebar: taskList, detail: taskDetail)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             if let message = model.errorMessage {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
@@ -39,15 +38,22 @@ struct RootView: View {
         .font(.system(size: 13)).buttonStyle(.plain)
         .frame(minWidth: 620, minHeight: 400)
         .onReceive(NotificationCenter.default.publisher(for: .focusQuickTask)) { _ in quickFocused = true }
+        .sheet(item: $addingChildTo) { parent in
+            SubtaskCreationView(model: model, parent: parent)
+        }
         .confirmationDialog("删除 \(deleting?.number ?? "")？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
             Button("删除任务及其关联", role: .destructive) { if let task = deleting { model.delete(task) }; deleting = nil }
             Button("取消", role: .cancel) { deleting = nil }
-        } message: { Text("只删除本地任务与关联记录，Codex 中的会话会保留。") }
+        } message: {
+            Text(deleting.map { model.snapshot.children(of: $0.id).isEmpty } == false
+                 ? "只删除此任务及其关联。子任务会保留并移到最外层，Codex 中的会话也会保留。"
+                 : "只删除本地任务与关联记录，Codex 中的会话会保留。")
+        }
     }
     private var taskList: some View {
         ScrollView {
             LazyVStack(spacing: 8) {
-                ForEach(model.snapshot.tasks) { task in
+                ForEach(model.snapshot.outlineTasks) { task in
                     HStack(alignment: .top, spacing: 10) {
                         Button { model.status(task, task.status == .done ? .todo : .done) } label: {
                             StatusCircle(status: task.status).frame(width: 18, height: 18)
@@ -57,14 +63,23 @@ struct RootView: View {
                                 Text(task.title).font(.system(size: 13, weight: .medium))
                                     .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                                     .frame(maxWidth: .infinity, alignment: .leading).help(task.title)
-                                TaskNumberTag(number: task.number)
                             }.contentShape(Rectangle())
                         }.accessibilityIdentifier("task-row-\(task.id)")
                     }
                     .padding(.horizontal, 12).padding(.vertical, 13)
-                    .background(model.selectedTaskID == task.id ? accent.opacity(0.09) : Color.clear)
+                    .background(model.selectedTaskID == task.id ? accent.opacity(0.09) : Color.white.opacity(0.75))
                     .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .padding(.leading, task.parentID == nil ? 0 : 22)
+                    .overlay(alignment: .leading) {
+                        if task.parentID != nil {
+                            Image(systemName: "arrow.turn.down.right").font(.system(size: 10))
+                                .foregroundColor(ink.opacity(0.3)).frame(width: 16)
+                        }
+                    }
                     .contextMenu {
+                        if task.parentID == nil {
+                            Button("新建子任务") { addingChildTo = task }
+                        }
                         Button("复制关联指令") { model.copyPrompt(task) }
                         Button("删除任务", role: .destructive) { deleting = task }
                     }
@@ -77,7 +92,7 @@ struct RootView: View {
     }
     @ViewBuilder private var taskDetail: some View {
         if let task = model.selectedTask {
-            TaskDetailView(model: model, task: task, onDelete: { deleting = task }).id(task.id)
+            TaskDetailView(model: model, task: task, onDelete: { deleting = task }, onAddSubtask: { addingChildTo = task }).id(task.id)
         } else {
             VStack(spacing: 12) {
                 Spacer()
@@ -87,6 +102,37 @@ struct RootView: View {
                 Spacer()
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+}
+
+private struct SubtaskCreationView: View {
+    @ObservedObject var model: AppModel
+    let parent: TaskItem
+    @Environment(\.dismiss) private var dismiss
+    @State private var title = ""
+    @State private var error: String?
+    @FocusState private var focused: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("新建子任务").font(.system(size: 18, weight: .semibold))
+            Text("属于：" + parent.title).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(2)
+            TextField("子任务名称", text: $title).textFieldStyle(.roundedBorder)
+                .focused($focused).onSubmit { create() }.accessibilityIdentifier("subtask-title")
+            if let error { Text(error).font(.system(size: 12)).foregroundColor(.red) }
+            HStack {
+                Spacer()
+                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("创建子任务") { create() }.keyboardShortcut(.defaultAction)
+                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("create-subtask")
+            }
+        }.padding(24).frame(width: 360).foregroundColor(ink).tint(accent).preferredColorScheme(.light)
+        .onAppear { focused = true }
+    }
+    private func create() {
+        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if model.addSubtask(title: title, to: parent) { dismiss() }
+        else { error = model.errorMessage }
     }
 }
 
@@ -130,6 +176,7 @@ private struct TaskDetailView: View {
     @ObservedObject var model: AppModel
     let task: TaskItem
     let onDelete: () -> Void
+    let onAddSubtask: () -> Void
     @State private var title = ""
     @State private var showingSessions = false
     @State private var copied = false
@@ -150,19 +197,9 @@ private struct TaskDetailView: View {
                             .help(copied ? "已复制关联指令" : "复制关联指令")
                         Spacer(minLength: 0)
                     }
-                    HStack(spacing: 16) {
-                        HStack(spacing: 2) {
-                            ForEach(TaskStatus.allCases, id: \.self) { status in
-                                Button { model.status(task, status) } label: {
-                                    Text(status.label).font(.system(size: 12, weight: task.status == status ? .semibold : .regular))
-                                        .foregroundColor(task.status == status ? .white : ink.opacity(0.8))
-                                        .padding(.horizontal, 11).padding(.vertical, 5)
-                                        .background(task.status == status ? accent : .clear).cornerRadius(5)
-                                }.accessibilityIdentifier("status-\(status.rawValue)")
-                            }
-                        }.padding(2).background(Color.black.opacity(0.045)).cornerRadius(7)
-                        Button(action: onDelete) { Label("删除", systemImage: "trash").font(.system(size: 12)).foregroundColor(.secondary) }
-                            .accessibilityIdentifier("delete-task")
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 16) { statusControls; taskActions }
+                        VStack(alignment: .leading, spacing: 10) { statusControls; taskActions }
                     }
                 }
                 Button { showingSessions.toggle() } label: {
@@ -217,6 +254,29 @@ private struct TaskDetailView: View {
         .onAppear { title = task.title }
         .onChange(of: task.title) { title = $0 }
         .onDisappear { saveTitle() }
+    }
+    private var statusControls: some View {
+        HStack(spacing: 2) {
+            ForEach(TaskStatus.allCases, id: \.self) { status in
+                Button { model.status(task, status) } label: {
+                    Text(status.label).font(.system(size: 12, weight: task.status == status ? .semibold : .regular))
+                        .foregroundColor(task.status == status ? .white : ink.opacity(0.8))
+                        .padding(.horizontal, 11).padding(.vertical, 5)
+                        .background(task.status == status ? accent : .clear).cornerRadius(5)
+                }.accessibilityIdentifier("status-\(status.rawValue)")
+            }
+        }.padding(2).background(Color.black.opacity(0.045)).cornerRadius(7).fixedSize()
+    }
+    private var taskActions: some View {
+        HStack(spacing: 16) {
+            if task.parentID == nil {
+                Button(action: onAddSubtask) {
+                    Label("子任务", systemImage: "plus").font(.system(size: 12)).foregroundColor(accent)
+                }.help("新建子任务").accessibilityIdentifier("add-subtask")
+            }
+            Button(action: onDelete) { Label("删除", systemImage: "trash").font(.system(size: 12)).foregroundColor(.secondary) }
+                .accessibilityIdentifier("delete-task")
+        }.fixedSize()
     }
     private func saveTitle() { if !title.isEmpty { model.rename(task, title) } }
 }

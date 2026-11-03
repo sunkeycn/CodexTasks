@@ -1,7 +1,10 @@
 {
   "checks" : {
     "attachSession" : true,
+    "childStateIndependent" : true,
     "copyAssociation" : true,
+    "createSubtaskSelectsChild" : true,
+    "deleteParentKeepsChild" : true,
     "deleteTask" : true,
     "detachSession" : true,
     "manualTaskState" : true,
@@ -11,7 +14,9 @@
     "quickAddSelectsAndClearsDraft" : true,
     "renameTask" : true,
     "screenshotWritten" : true,
+    "sidebarStartsAt300" : true,
     "taskHasTwoIndependentSessions" : true,
+    "treeGroupsSeededSubtasks" : true,
     "windowHasNoToolbar" : true
   },
   "error" : "",

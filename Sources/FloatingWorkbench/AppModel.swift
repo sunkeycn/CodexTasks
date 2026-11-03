@@ -98,15 +98,23 @@ final class AppModel: ObservableObject {
             scheduleRead(delay: 0)
         }
     }
+    @discardableResult func addSubtask(title: String, to parent: TaskItem) -> Bool {
+        var id: Int64?
+        guard perform({ id = try store.createTask(title: title, parentID: parent.id) }) else { return false }
+        selectedTaskID = id
+        if let task = selectedTask { copyPrompt(task) }
+        scheduleRead(delay: 0)
+        return true
+    }
     func status(_ task: TaskItem, _ status: TaskStatus) { perform { try store.setStatus(task.id, status) } }
     func rename(_ task: TaskItem, _ title: String) {
         guard title.trimmingCharacters(in: .whitespacesAndNewlines) != task.title else { return }
         perform { try store.renameTask(task.id, title: title) }
     }
     func delete(_ task: TaskItem) {
-        let position = snapshot.tasks.firstIndex { $0.id == task.id } ?? 0
+        let position = snapshot.outlineTasks.firstIndex { $0.id == task.id } ?? 0
         guard perform({ try store.deleteTask(task.id) }) else { return }
-        if !snapshot.tasks.isEmpty { selectedTaskID = snapshot.tasks[min(position, snapshot.tasks.count - 1)].id }
+        if !snapshot.tasks.isEmpty { selectedTaskID = snapshot.outlineTasks[min(position, snapshot.tasks.count - 1)].id }
     }
     func attach(_ session: ObservedSession, to task: TaskItem) { if perform({ try store.attach(session, to: task.id) }) { scheduleRead(delay: 0) } }
     func detach(_ session: SessionItem) { perform { try store.detach(session.id) } }

@@ -12,6 +12,7 @@ public struct TaskItem: Identifiable, Equatable, Sendable {
     public var title: String
     public var status: TaskStatus
     public let createdAt: Date
+    public var parentID: Int64? = nil
     public var number: String { String(format: "T#%02lld", id) }
     public var associationPrompt: String { "关联任务【\(number)】" }
 }
@@ -56,6 +57,9 @@ public struct TaskSnapshot: Equatable, Sendable {
     public var tasks: [TaskItem]
     public var sessions: [SessionItem]
     public init(tasks: [TaskItem] = [], sessions: [SessionItem] = []) { self.tasks = tasks; self.sessions = sessions }
+    public var rootTasks: [TaskItem] { tasks.filter { $0.parentID == nil } }
+    public func children(of taskID: Int64) -> [TaskItem] { tasks.filter { $0.parentID == taskID } }
+    public var outlineTasks: [TaskItem] { rootTasks.flatMap { [$0] + children(of: $0.id) } }
     public func sessions(for taskID: Int64) -> [SessionItem] { sessions.filter { $0.taskID == taskID } }
 }
 

@@ -19,7 +19,7 @@ public final class TaskStore: @unchecked Sendable {
             sqlite3_busy_timeout(db, 3000)
             let version = try scalar("PRAGMA user_version")
             let applicationID = try scalar("PRAGMA application_id")
-            guard (version == 0 && applicationID == 0) || (version == 1 && applicationID == 0x43544C54) else {
+            guard (version == 0 && applicationID == 0) || ((1...2).contains(version) && applicationID == 0x43544C54) else {
                 throw LiteError.message("该文件不是受支持的轻量版数据库，已停止读取。")
             }
             if version == 0 {
@@ -47,6 +47,26 @@ public final class TaskStore: @unchecked Sendable {
                 PRAGMA user_version=1;
                 COMMIT;
                 """)
+            }
+            // Additive migration: existing tasks, IDs, statuses and associations stay intact.
+            // Recheck under the write lock so simultaneous openers cannot migrate twice.
+            try transaction {
+                if try scalar("PRAGMA user_version") == 1 {
+                    try execute("""
+                    ALTER TABLE tasks ADD COLUMN parent_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL;
+                    CREATE INDEX tasks_by_parent ON tasks(parent_id,id);
+                    CREATE TRIGGER tasks_single_level_insert BEFORE INSERT ON tasks
+                    WHEN NEW.parent_id IS NOT NULL AND
+                      (NEW.parent_id = NEW.id OR NOT EXISTS (SELECT 1 FROM tasks WHERE id=NEW.parent_id AND parent_id IS NULL))
+                    BEGIN SELECT RAISE(ABORT, 'Only one level of subtasks is supported'); END;
+                    CREATE TRIGGER tasks_single_level_update BEFORE UPDATE OF parent_id ON tasks
+                    WHEN NEW.parent_id IS NOT NULL AND
+                      (NEW.parent_id = NEW.id OR NOT EXISTS (SELECT 1 FROM tasks WHERE id=NEW.parent_id AND parent_id IS NULL)
+                       OR EXISTS (SELECT 1 FROM tasks WHERE parent_id=NEW.id))
+                    BEGIN SELECT RAISE(ABORT, 'Only one level of subtasks is supported'); END;
+                    PRAGMA user_version=2;
+                    """)
+                }
             }
             try execute("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")
         } catch {
@@ -90,11 +110,11 @@ public final class TaskStore: @unchecked Sendable {
         try execute("BEGIN")
         do {
             var tasks: [TaskItem] = [], sessions: [SessionItem] = []
-            let t = try statement("SELECT id,title,status,created_at FROM tasks ORDER BY id ASC")
+            let t = try statement("SELECT id,title,status,created_at,parent_id FROM tasks ORDER BY id ASC")
             defer { sqlite3_finalize(t) }
             var code = sqlite3_step(t)
             while code == SQLITE_ROW {
-                tasks.append(TaskItem(id: sqlite3_column_int64(t, 0), title: text(t, 1), status: TaskStatus(rawValue: text(t, 2)) ?? .todo, createdAt: Date(timeIntervalSince1970: sqlite3_column_double(t, 3))))
+                tasks.append(TaskItem(id: sqlite3_column_int64(t, 0), title: text(t, 1), status: TaskStatus(rawValue: text(t, 2)) ?? .todo, createdAt: Date(timeIntervalSince1970: sqlite3_column_double(t, 3)), parentID: sqlite3_column_type(t, 4) == SQLITE_NULL ? nil : sqlite3_column_int64(t, 4)))
                 code = sqlite3_step(t)
             }
             guard code == SQLITE_DONE else { throw databaseError() }
@@ -110,12 +130,20 @@ public final class TaskStore: @unchecked Sendable {
             return TaskSnapshot(tasks: tasks, sessions: sessions)
         } catch { try? execute("ROLLBACK"); throw error }
     }
-    @discardableResult public func createTask(title: String, at date: Date = Date()) throws -> Int64 {
+    @discardableResult public func createTask(title: String, parentID: Int64? = nil, at date: Date = Date()) throws -> Int64 {
         let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { throw LiteError.message("请先输入任务内容。") }
         return try transaction {
-            let s = try statement("INSERT INTO tasks(title,created_at) VALUES (?,?)"); defer { sqlite3_finalize(s) }
-            bind(clean, s, 1); sqlite3_bind_double(s, 2, date.timeIntervalSince1970); try finish(s)
+            if let parentID {
+                let parent = try statement("SELECT parent_id FROM tasks WHERE id=?"); defer { sqlite3_finalize(parent) }
+                sqlite3_bind_int64(parent, 1, parentID)
+                guard sqlite3_step(parent) == SQLITE_ROW else { throw LiteError.message("父任务不存在，无法创建子任务。") }
+                guard sqlite3_column_type(parent, 0) == SQLITE_NULL else { throw LiteError.message("只支持一层子任务，不能在子任务下继续创建。") }
+            }
+            let s = try statement("INSERT INTO tasks(title,created_at,parent_id) VALUES (?,?,?)"); defer { sqlite3_finalize(s) }
+            bind(clean, s, 1); sqlite3_bind_double(s, 2, date.timeIntervalSince1970)
+            if let parentID { sqlite3_bind_int64(s, 3, parentID) } else { sqlite3_bind_null(s, 3) }
+            try finish(s)
             return sqlite3_last_insert_rowid(db)
         }
     }

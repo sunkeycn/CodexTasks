@@ -1,0 +1,19 @@
+{
+  "passed": true,
+  "checks": {
+    "default_sidebar_width_300": true,
+    "unselected_cards_have_matching_rounded_backgrounds": true,
+    "sidebar_task_labels_hide_numbers": true,
+    "parent_context_menu_opens_subtask_form": true,
+    "return_creates_and_selects_indented_subtask": true,
+    "child_detail_has_no_add_subtask_action": true,
+    "child_context_menu_has_no_add_subtask_action": true,
+    "dragged_width_345_preserved_after_create_cancel_and_selection": true,
+    "child_links_multiple_sessions_without_dismissing_picker": true,
+    "outside_click_dismisses_picker": true,
+    "parent_session_bindings_remain_independent": true,
+    "narrow_window_actions_wrap_without_vertical_status_labels": true
+  },
+  "method": "Actual CUA interaction with an isolated demo bundle and synthetic tasks/sessions. Window screenshot and accessibility state inspected; no user task database was used. Narrow-window layout was checked on the final source.",
+  "version": "2.0.3"
+}

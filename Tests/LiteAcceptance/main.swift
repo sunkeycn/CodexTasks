@@ -18,7 +18,7 @@ func scalar(_ url: URL, _ query: String) throws -> Int {
     var db: OpaquePointer?, s: OpaquePointer?
     guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { throw LiteError.message("read failed") }
     defer { sqlite3_finalize(s); sqlite3_close(db) }
-    guard sqlite3_prepare_v2(db, query, -1, &s, nil) == SQLITE_OK, sqlite3_step(s) == SQLITE_ROW else { throw LiteError.message("query failed") }
+    guard sqlite3_prepare_v2(db, query, -1, &s, nil) == SQLITE_OK, sqlite3_step(s) == SQLITE_ROW else { throw LiteError.message("query failed: " + String(cString: sqlite3_errmsg(db))) }
     return Int(sqlite3_column_int64(s, 0))
 }
 func rejected(_ operation: () throws -> Void) -> Bool { do { try operation(); return false } catch { return true } }
@@ -81,6 +81,51 @@ check("unknown-schema-not-overwritten", rejected { _ = try TaskStore(url: unknow
 let futureURL = root.appendingPathComponent("future.sqlite")
 try sql(futureURL, "PRAGMA user_version=99;")
 check("future-schema-rejected", rejected { _ = try TaskStore(url: futureURL) })
+
+// One-level hierarchy and a real v1 -> v2 migration, in isolated databases.
+let treeURL = root.appendingPathComponent("tree.sqlite")
+let tree = try TaskStore(url: treeURL)
+let parent = try tree.createTask(title: "父任务", at: base)
+let otherRoot = try tree.createTask(title: "另一个主任务", at: base)
+let child = try tree.createTask(title: "子任务", parentID: parent, at: base)
+let sibling = try tree.createTask(title: "第二个子任务", parentID: parent, at: base)
+check("subtask-persists-parent", try tree.snapshot().children(of: parent).map(\.id) == [child, sibling])
+check("tree-order-groups-children-under-parent", try tree.snapshot().outlineTasks.map(\.id) == [parent, child, sibling, otherRoot])
+check("third-level-rejected", rejected { _ = try tree.createTask(title: "孙任务", parentID: child) })
+check("missing-parent-rejected", rejected { _ = try tree.createTask(title: "孤立子任务", parentID: 99999) })
+check("database-rejects-third-level", rejected { try sql(treeURL, "INSERT INTO tasks(title,created_at,parent_id) VALUES('invalid',0,\(child));") })
+check("database-rejects-self-parent", rejected { try sql(treeURL, "UPDATE tasks SET parent_id=id WHERE id=\(otherRoot);") })
+check("database-rejects-reparenting-with-children", rejected { try sql(treeURL, "UPDATE tasks SET parent_id=\(otherRoot) WHERE id=\(parent);") })
+let childSession = ObservedSession(id: UUID().uuidString, title: "子任务会话", taskNumber: child, commandAt: base.addingTimeInterval(1))
+try tree.reconcile([childSession])
+try tree.setStatus(child, .done)
+check("subtask-state-and-session-independent", try tree.snapshot().tasks.first { $0.id == parent }?.status == .todo && tree.snapshot().sessions(for: child).count == 1)
+let treeReloaded = try TaskStore(url: treeURL)
+check("tree-survives-reopen", try treeReloaded.snapshot() == tree.snapshot())
+try tree.deleteTask(parent)
+check("delete-parent-promotes-children", try tree.snapshot().rootTasks.map(\.id) == [otherRoot, child, sibling])
+check("delete-parent-preserves-child-sessions", try tree.snapshot().sessions(for: child).count == 1)
+try tree.deleteTask(child)
+try tree.reconcile([childSession])
+check("delete-child-does-not-affect-sibling", try tree.snapshot().tasks.map(\.id) == [otherRoot, sibling] && tree.snapshot().sessions.allSatisfy { $0.taskID == nil })
+let migrationURL = root.appendingPathComponent("lite-v1.sqlite")
+try sql(migrationURL, """
+CREATE TABLE tasks(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'todo',created_at REAL NOT NULL);
+CREATE TABLE sessions(id TEXT PRIMARY KEY,task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,title TEXT NOT NULL,status TEXT NOT NULL,updated_at REAL NOT NULL,bound_at REAL NOT NULL);
+CREATE INDEX sessions_by_task ON sessions(task_id,updated_at DESC);
+INSERT INTO tasks(id,title,status,created_at) VALUES(7,'保留原任务','doing',1800000000);
+INSERT INTO sessions VALUES('legacy-session',7,'保留会话','running',1800000001,1800000001);
+PRAGMA application_id=1129598036;
+PRAGMA user_version=1;
+""")
+let migrated = try TaskStore(url: migrationURL)
+let migratedSnapshot = try migrated.snapshot()
+check("migration-upgrades-to-schema-two", try scalar(migrationURL, "PRAGMA user_version") == 2)
+check("migration-preserves-old-task", migratedSnapshot.rootTasks.first?.id == 7 && migratedSnapshot.rootTasks.first?.status == .doing && migratedSnapshot.rootTasks.first?.title == "保留原任务")
+check("migration-preserves-session-binding", try migrated.snapshot().sessions(for: 7).first?.id == "legacy-session")
+let migratedChild = try migrated.createTask(title: "升级后子任务", parentID: 7)
+check("migration-preserves-sequence-and-adds-subtasks", try migrated.snapshot().children(of: 7).map(\.id) == [8] && migratedChild == 8)
+check("migration-reopen-is-idempotent", try TaskStore(url: migrationURL).snapshot() == migrated.snapshot())
 
 // Synthetic Codex index and logs: no real user session or repository is needed.
 let home = root.appendingPathComponent("codex")

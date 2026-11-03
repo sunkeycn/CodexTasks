@@ -110,7 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !sidebarWidthInitialized, let content = panel.contentView {
             content.layoutSubtreeIfNeeded()
             if let split = findSplitView(in: content) {
-                split.setPosition(260, ofDividerAt: 0)
+                split.setPosition(300, ofDividerAt: 0)
                 sidebarWidthInitialized = true
             }
         }
@@ -131,6 +131,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     private func seed(_ store: TaskStore) throws {
         let first = try store.createTask(title: "任务1")
+        _ = try store.createTask(title: "梳理任务交互与侧栏布局", parentID: first)
+        _ = try store.createTask(title: "验证多会话关联", parentID: first)
         _ = try store.createTask(title: "优化任务与多个 Codex 会话的关联体验，并验证侧栏宽度调整与长标题的完整展示")
         try store.attach(ObservedSession(id: "00000000-0000-4000-8000-000000000001", title: "Codex Session", status: .running), to: first)
         try store.attach(ObservedSession(id: "00000000-0000-4000-8000-000000000002", title: "Codex Session", status: .completed), to: first)
@@ -160,6 +162,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         do {
             checks["nativeWindowVisible"] = panel.isVisible && panel.contentView is NSHostingView<RootView>
             checks["windowHasNoToolbar"] = panel.toolbar == nil
+            checks["sidebarStartsAt300"] = panel.contentView.flatMap { findSplitView(in: $0)?.subviews.first?.frame.width }.map { abs($0 - 300) < 2 } ?? false
+            checks["treeGroupsSeededSubtasks"] = model.snapshot.outlineTasks.prefix(3).map(\.parentID) == [nil, model.selectedTaskID, model.selectedTaskID]
             checks["taskHasTwoIndependentSessions"] = model.sessions.count == 2 && Set(model.sessions.map(\.status)).count == 2
             if let screenshot = argument("--screenshot-output") { try capture(screenshot); checks["screenshotWritten"] = FileManager.default.fileExists(atPath: screenshot) }
             let first = model.selectedTask!
@@ -177,7 +181,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             checks["attachSession"] = model.sessions.count == 1
             model.detach(model.sessions[0])
             checks["detachSession"] = model.sessions.isEmpty
+            checks["createSubtaskSelectsChild"] = model.addSubtask(title: "子任务验收", to: created) && model.selectedTask?.parentID == created.id
+            let child = model.selectedTask!
+            model.status(child, .done)
+            checks["childStateIndependent"] = model.snapshot.tasks.first { $0.id == created.id }?.status == .todo
             model.delete(created)
+            checks["deleteParentKeepsChild"] = model.snapshot.tasks.first { $0.id == child.id }?.parentID == nil
+            model.delete(child)
             checks["deleteTask"] = !model.snapshot.tasks.contains { $0.id == created.id }
             checks["otherTaskKeepsMultipleSessions"] = model.snapshot.sessions(for: first.id).count == 2
             model.status(first, .todo); model.selectedTaskID = first.id
