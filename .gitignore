@@ -13,3 +13,6 @@ hooks.json.codex-tasks-backup-*
 .env
 .env.*
 !.env.example
+# Local release binaries; upload these as GitHub Release assets.
+outputs/*.dmg
+outputs/release-*/

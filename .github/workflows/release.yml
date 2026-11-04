@@ -1,0 +1,85 @@
+name: Build and publish macOS release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check tag and release notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          tag = os.environ['RELEASE_TAG']
+          assert re.fullmatch(r'v\d+\.\d+\.\d+', tag), 'Use a stable vMAJOR.MINOR.PATCH tag'
+          source = Path('scripts/build-app.sh').read_text()
+          version = re.search(r'CFBundleShortVersionString</key><string>([^<]+)', source).group(1)
+          assert tag == 'v' + version, f'Tag {tag} does not match app version {version}'
+          assert Path(f'docs/releases/{tag}.md').is_file(), 'Release notes are missing'
+          PY
+      - name: Run isolated core and Hooks acceptance
+        run: ./scripts/test.sh
+      - name: Build and verify universal application and ZIP
+        env:
+          UNIVERSAL: '1'
+          RELAUNCH: '0'
+        run: ./scripts/build-app.sh
+      - name: Build and verify DMG
+        id: package
+        run: |
+          ./scripts/build-dmg.sh
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' 'outputs/Codex Tasks.app/Contents/Info.plist')
+          echo "directory=outputs/release-v$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Upload verified release assets
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macOS-universal
+          path: ${{ steps.package.outputs.directory }}/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: macOS-universal
+          path: release
+      - name: Check downloaded assets
+        working-directory: release
+        run: sha256sum -c SHA256SUMS.txt
+      - name: Create draft with attachments, then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" release/* \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+            --title "Codex Tasks $RELEASE_TAG" \
+            --notes-file "docs/releases/$RELEASE_TAG.md"
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
