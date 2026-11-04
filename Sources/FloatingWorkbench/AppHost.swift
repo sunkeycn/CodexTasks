@@ -29,8 +29,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var normalSize = NSSize(width: 940, height: 680)
     private let presentation = WindowPresentation()
     private var content: NSHostingView<RootView>!
-    private var cycleMenuItem: NSMenuItem!
-    private var cycleStatusItem: NSMenuItem!
     private var registeredShortcut: WindowShortcut?
     private var shortcutPaused = false
     private var recordingObservation: AnyCancellable?
@@ -40,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsWindow: NSWindow?
     private var hotKey: EventHotKeyRef?
     private var hotKeyHandler: EventHandlerRef?
+    private var localShortcutMonitor: Any?
     private var terminationSource: DispatchSourceSignal?
     private var lockFD: Int32 = -1
     private let smokePath = argument("--smoke-test-output")
@@ -95,19 +94,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.isMovableByWindowBackground = true
         panel.contentMinSize = NSSize(width: 620, height: 240)
         panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.isFloatingPanel = true
-        panel.level = .floating; panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        applyPinnedState(); panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.backgroundColor = .white; panel.delegate = self
-        content = NSHostingView(rootView: RootView(model: model, presentation: presentation, onToggleDetail: { [weak self] in self?.toggleDetail() }))
+        content = NSHostingView(rootView: RootView(model: model, presentation: presentation, onTogglePin: { [weak self] in self?.togglePin() }, onToggleDetail: { [weak self] in self?.toggleDetail() }))
         panel.contentView = content
         panel.center()
     }
     private func configureMenu() {
         let main = NSMenu(), appItem = NSMenuItem(), menu = NSMenu(title: "Codex Tasks")
         menu.addItem(withTitle: "打开 Codex Tasks", action: #selector(showWindow), keyEquivalent: "0").target = self
-        menu.addItem(withTitle: "悬浮小窗口", action: #selector(showCompactWindow), keyEquivalent: "").target = self
-        cycleMenuItem = menu.addItem(withTitle: "切换窗口形态", action: #selector(handleWindowShortcut), keyEquivalent: "")
-        cycleMenuItem.target = self
-        menu.addItem(withTitle: "隐藏窗口", action: #selector(hideWindow), keyEquivalent: "").target = self
         menu.addItem(withTitle: "快速记录任务", action: #selector(quickTask), keyEquivalent: "n").target = self
         menu.addItem(withTitle: "设置…", action: #selector(showSettings), keyEquivalent: ",").target = self
         menu.addItem(.separator())
@@ -122,11 +117,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem.button?.image = NSImage(systemSymbolName: "checklist", accessibilityDescription: "Codex Tasks")
         let statusMenu = NSMenu()
         statusMenu.addItem(withTitle: "打开 Codex Tasks", action: #selector(showWindow), keyEquivalent: "").target = self
-        statusMenu.addItem(withTitle: "悬浮小窗口", action: #selector(showCompactWindow), keyEquivalent: "").target = self
-        cycleStatusItem = statusMenu.addItem(withTitle: "切换窗口形态", action: #selector(cycleWindowMode), keyEquivalent: "")
-        cycleStatusItem.target = self
-        statusMenu.addItem(withTitle: "隐藏窗口", action: #selector(hideWindow), keyEquivalent: "").target = self
-        statusMenu.addItem(withTitle: "快速记录任务", action: #selector(quickTask), keyEquivalent: "").target = self
         statusMenu.addItem(withTitle: "设置…", action: #selector(showSettings), keyEquivalent: "").target = self
         statusMenu.addItem(.separator())
         statusMenu.addItem(withTitle: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
@@ -135,12 +125,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var usesGlobalHotKey: Bool {
         smokePath == nil && (!CommandLine.arguments.contains("--demo") || argument("--window-state-output") != nil)
     }
-    private func updateShortcutMenu(_ shortcut: WindowShortcut) {
-        cycleMenuItem.keyEquivalent = shortcutPaused ? "" : shortcut.keyEquivalent
-        cycleMenuItem.keyEquivalentModifierMask = shortcut.eventModifiers
-        cycleStatusItem.title = "切换窗口形态（\(shortcut.label)）"
-    }
     private func configureHotKey() {
+        // The global Carbon hotkey and focused-window key events share one handler.
+        localShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, !self.shortcutPaused, let shortcut = self.registeredShortcut,
+                  UInt32(event.keyCode) == shortcut.keyCode,
+                  event.modifierFlags.intersection([.command, .shift, .option, .control]) == shortcut.eventModifiers else { return event }
+            if !event.isARepeat { self.handleWindowShortcut() }
+            return nil
+        }
         if usesGlobalHotKey {
             var type = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
             InstallEventHandler(GetApplicationEventTarget(), { _, _, info in
@@ -158,7 +151,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.shortcutPaused = recording
             if recording {
                 if let hotKey = self.hotKey { UnregisterEventHotKey(hotKey); self.hotKey = nil }
-                self.cycleMenuItem.keyEquivalent = ""
             } else {
                 do { try self.applyShortcut(self.model.settings.windowShortcut) }
                 catch { self.model.errorMessage = error.localizedDescription }
@@ -176,22 +168,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             hotKey = next
         }
         registeredShortcut = shortcut
-        updateShortcutMenu(shortcut)
     }
     @objc private func handleWindowShortcut() {
         let now = ProcessInfo.processInfo.systemUptime
-        // Carbon and the focused app's menu can observe the same key; advance exactly once.
+        // Ignore repeated delivery from one physical key press.
         guard now - lastShortcutTime > 0.2 else { return }
         lastShortcutTime = now
-        cycleWindowMode()
+        toggleWindowVisibility()
     }
-    @objc private func cycleWindowMode() {
+    private func toggleWindowVisibility() {
         guard panel.attachedSheet == nil, !model.isRecordingShortcut, !presentation.isTransitioning else { return }
-        switch windowMode {
-        case .hidden: showCompactWindow()
-        case .compact: showWindow()
-        case .normal: hideWindow()
-        }
+        if windowMode == .hidden || panel.isMiniaturized { showWindow() }
+        else { hideWindow() }
     }
     private func rememberVisibleFrame() {
         if windowMode == .normal {
@@ -206,7 +194,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         rememberVisibleFrame(); windowMode = .hidden; panel.orderOut(nil)
     }
     @objc private func showCompactWindow() { presentWindow(.compact) }
-    @objc func showWindow() { presentWindow(.normal) }
+    @objc func showWindow() { presentWindow(presentation.isCompact ? .compact : .normal) }
+    private func togglePin() {
+        model.isWindowPinned.toggle()
+        applyPinnedState()
+    }
+    private func applyPinnedState() {
+        presentation.isPinned = model.isWindowPinned
+        panel.isFloatingPanel = model.isWindowPinned
+        panel.level = model.isWindowPinned ? .floating : .normal
+    }
     private func toggleDetail() {
         presentWindow(presentation.isCompact ? .normal : .compact)
     }
@@ -274,18 +271,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.contentView = NSHostingView(rootView: SettingsView(model: model, onClose: { [weak window] in window?.close() }))
         settingsWindow = window; window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
     }
-    @objc private func quickTask() { showWindow(); NotificationCenter.default.post(name: .focusQuickTask, object: nil) }
+    @objc private func quickTask() { presentWindow(.normal); NotificationCenter.default.post(name: .focusQuickTask, object: nil) }
     func windowShouldClose(_ sender: NSWindow) -> Bool { hideWindow(); return false }
     func windowDidMiniaturize(_ notification: Notification) { rememberVisibleFrame(); windowMode = .hidden }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if windowMode == .compact && panel.isVisible { showCompactWindow() }
-        else { showWindow() }
+        showWindow()
         return true
     }
     func applicationWillTerminate(_ notification: Notification) {
         model?.stop()
         if let hotKey { UnregisterEventHotKey(hotKey) }
         if let hotKeyHandler { RemoveEventHandler(hotKeyHandler) }
+        if let localShortcutMonitor { NSEvent.removeMonitor(localShortcutMonitor) }
         if lockFD >= 0 { flock(lockFD, LOCK_UN); close(lockFD) }
     }
     private func seed(_ store: TaskStore) throws {
@@ -319,9 +316,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         lastShortcutTime = -.infinity
         handleWindowShortcut(); handleWindowShortcut()
         checks["shortcutDeduplicatesSameKey"] = windowMode == .hidden
-        checks["normalCyclesToHidden"] = windowMode == .hidden && !panel.isVisible
-        cycleWindowMode()
-        checks["hiddenCyclesToCompact"] = windowMode == .compact && panel.isVisible && presentation.isCompact
+        checks["normalShortcutHides"] = windowMode == .hidden && !panel.isVisible
+        toggleWindowVisibility()
+        checks["hiddenShortcutRestoresNormalFrame"] = windowMode == .normal && panel.isVisible && panel.frame == savedFrame
+        toggleDetail()
         checks["compactRetainsHostAndList"] = panel.contentView === sharedHost && findSplitView(in: content)?.subviews.first === sharedList
         checks["compactHidesRightPane"] = findSplitView(in: content)?.subviews.last?.isHidden == true
             && abs(panel.frame.width - savedSidebar) < 2
@@ -330,7 +328,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         checks["compactResizeKeepsSquareAspectRatio"] = panel.contentAspectRatio == NSSize(width: 1, height: 1)
         _ = applicationShouldHandleReopen(NSApp, hasVisibleWindows: true)
         checks["reopenPreservesVisibleCompact"] = windowMode == .compact
-        checks["compactFloatsAcrossSpaces"] = panel.level == .floating && !panel.hidesOnDeactivate
+        let compactFrame = panel.frame
+        toggleWindowVisibility()
+        checks["compactShortcutHides"] = windowMode == .hidden && !panel.isVisible && presentation.isCompact
+        toggleWindowVisibility()
+        checks["compactShortcutRestoresExactFrame"] = windowMode == .compact && panel.isVisible && panel.frame == compactFrame
+        hideWindow(); showWindow()
+        checks["menuOpenRestoresCompact"] = windowMode == .compact && panel.frame == compactFrame
+        let wasPinned = model.isWindowPinned
+        if !wasPinned { togglePin() }
+        checks["pinRaisesWindow"] = panel.level == .floating && panel.isFloatingPanel && presentation.isPinned
+        togglePin()
+        checks["unpinUsesNormalLevel"] = panel.level == .normal && !panel.isFloatingPanel && !presentation.isPinned
+        let restored = try AppModel(store: model.store, preferences: UserDefaults(suiteName: "ai.sunkey.codextasks.lite.smoke")!)
+        checks["pinPreferenceRestores"] = !restored.isWindowPinned
+        toggleWindowVisibility(); toggleWindowVisibility(); toggleDetail()
+        checks["windowChangesKeepUnpinned"] = panel.level == .normal && !presentation.isPinned
+        toggleDetail()
+        if wasPinned { togglePin() }
+        checks["statusMenuOnlyOpenSettingsQuit"] = statusItem.menu?.items.filter { !$0.isSeparatorItem }.map(\.title) == ["打开 Codex Tasks", "设置…", "退出"]
         if let screenshot = argument("--compact-screenshot-output") { try capture(screenshot) }
         let first = model.snapshot.rootTasks.first!
         let collapsed = model.collapsedTaskIDs.contains(first.id)
@@ -355,7 +371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.setContentSize(NSSize(width: 320, height: 320)); content.layoutSubtreeIfNeeded()
         let resizedFrame = panel.frame
         model.rememberSidebarWidth(320)
-        cycleWindowMode()
+        toggleDetail()
         checks["expandRestoresNormalHeightAfterCompactResize"] = panel.frame.height == savedFrame.height
         checks["expandPreservesCompactTopLeft"] = panel.frame.minX == resizedFrame.minX && panel.frame.maxY == resizedFrame.maxY
         checks["normalResizeIsUnconstrained"] = panel.contentAspectRatio == .zero
@@ -369,8 +385,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         checks["quickTaskOpensNormal"] = windowMode == .normal && panel.isVisible
         _ = windowShouldClose(panel)
         checks["closeSetsHiddenState"] = windowMode == .hidden && !panel.isVisible
-        cycleWindowMode()
-        checks["closeThenCycleShowsCompact"] = windowMode == .compact && panel.isVisible
+        toggleWindowVisibility()
+        checks["closeThenShortcutRestoresNormal"] = windowMode == .normal && panel.isVisible
         showWindow(); model.draft = ""
         model.rememberSidebarWidth(savedSidebar)
     }

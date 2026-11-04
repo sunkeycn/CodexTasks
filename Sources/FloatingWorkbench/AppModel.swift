@@ -57,6 +57,10 @@ final class AppModel: ObservableObject {
         let saved = preferences.double(forKey: "lite.sidebarWidth")
         return saved.isFinite && saved >= 180 ? min(440, saved) : 300
     }
+    var isWindowPinned: Bool {
+        get { preferences.object(forKey: "lite.windowPinned") as? Bool ?? true }
+        set { preferences.set(newValue, forKey: "lite.windowPinned") }
+    }
     func rememberSidebarWidth(_ width: CGFloat) { preferences.set(Double(width), forKey: "lite.sidebarWidth") }
     func selectTask(_ task: TaskItem) {
         if let parentID = task.parentID { collapsedTaskIDs.remove(parentID) }

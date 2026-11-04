@@ -1,0 +1,24 @@
+{
+  "version": "2.4.1",
+  "build": "31",
+  "windowChecks": 100,
+  "windowPassed": true,
+  "nativeKeyInputHistory": [
+    "normal",
+    "hidden",
+    "normal",
+    "compact",
+    "hidden",
+    "compact"
+  ],
+  "nativeKeyInputNote": "The UI inspection tool reopens a hidden application before reading its accessibility tree; both normal and compact modes remain unchanged on reopen. OS global Carbon delivery from another foreground app is not verified by synthetic app-targeted key input.",
+  "launchServicesEntries": [
+    {
+      "path": "/Users/sunkey/WorkSpace/sunkey/floating-dev-workbench-v1/outputs/Codex Tasks.app",
+      "identifier": "ai.sunkey.floatingworkbench",
+      "bundle flags": "has-display-name  ui-element (0000000000000006)",
+      "enabled": true
+    }
+  ],
+  "enabledApplicationCount": 1
+}

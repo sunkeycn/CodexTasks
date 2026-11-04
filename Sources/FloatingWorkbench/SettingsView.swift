@@ -52,7 +52,7 @@ struct SettingsView: View {
     }
     private var shortcutCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("窗口形态").font(.system(size: 14, weight: .semibold))
+            Text("显示／隐藏窗口").font(.system(size: 14, weight: .semibold))
             HStack {
                 Text("切换快捷键").font(.system(size: 12))
                 Spacer()
@@ -62,7 +62,7 @@ struct SettingsView: View {
                 Button("恢复默认") { draft.windowShortcut = WindowShortcut() }
                     .accessibilityIdentifier("reset-window-shortcut")
             }
-            Text("点击快捷键后按下新组合，保存后生效。依次切换隐藏、小窗口和正常窗口；右上角按钮可直接展开／收起详情。")
+            Text("点击快捷键后按下新组合，保存后生效。仅切换显示／隐藏，恢复隐藏前的窗口大小与展开状态；右上角箭头可展开／收起详情，图钉可切换置顶。")
                 .font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
         }.padding(16).settingsCard()
     }

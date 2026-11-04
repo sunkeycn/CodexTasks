@@ -10,6 +10,7 @@ private let sidebarColor = Color(red: 0.945, green: 0.953, blue: 0.969)
 
 @MainActor final class WindowPresentation: ObservableObject {
     @Published var isCompact = false
+    @Published var isPinned = true
     @Published var isTransitioning = false
 }
 
@@ -25,6 +26,7 @@ private struct HeaderDragRegion: NSViewRepresentable {
 struct RootView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var presentation: WindowPresentation
+    let onTogglePin: () -> Void
     let onToggleDetail: () -> Void
     @FocusState private var quickFocused: Bool
     @State private var deleting: TaskItem?
@@ -34,6 +36,15 @@ struct RootView: View {
             HStack(spacing: 8) {
                 Text("Codex Tasks").font(.system(size: 13, weight: .semibold)).lineLimit(1).allowsHitTesting(false)
                 Spacer(minLength: 4)
+                Button(action: onTogglePin) {
+                    Image(systemName: presentation.isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(presentation.isPinned ? accent : .secondary)
+                        .frame(width: 28, height: 24).contentShape(Rectangle())
+                }.help(presentation.isPinned ? "取消置顶" : "置顶窗口")
+                    .accessibilityLabel(presentation.isPinned ? "取消置顶" : "置顶窗口")
+                    .accessibilityValue(presentation.isPinned ? "已置顶" : "未置顶")
+                    .accessibilityIdentifier("toggle-window-pin")
                 Button(action: onToggleDetail) {
                     Image(systemName: presentation.isCompact ? "chevron.right" : "chevron.left")
                         .font(.system(size: 11, weight: .semibold)).foregroundColor(accent)

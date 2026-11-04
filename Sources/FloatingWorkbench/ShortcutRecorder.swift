@@ -39,7 +39,7 @@ struct ShortcutRecorder: NSViewRepresentable {
         let button = ShortcutRecorderButton()
         button.bezelStyle = .rounded
         button.setAccessibilityIdentifier("window-shortcut-recorder")
-        button.setAccessibilityLabel("切换窗口形态快捷键")
+        button.setAccessibilityLabel("显示／隐藏窗口快捷键")
         return button
     }
     func updateNSView(_ button: ShortcutRecorderButton, context: Context) {
