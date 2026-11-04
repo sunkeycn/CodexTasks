@@ -42,6 +42,18 @@ jobs:
           UNIVERSAL: '1'
           RELAUNCH: '0'
         run: |
+          # SwiftPM on this runner reuses the other architecture's product plan.
+          # Keep the approved tag untouched and disable that cache in the build environment.
+          git diff --exit-code v2.4.1 -- .
+          swift() {
+            if [[ "$1" == build ]]; then
+              shift
+              command swift build --disable-build-manifest-caching "$@"
+            else
+              command swift "$@"
+            fi
+          }
+          export -f swift
           set +e
           bash -x ./scripts/build-app.sh 2>&1 | tee "$RUNNER_TEMP/build-app.log"
           result=${PIPESTATUS[0]}
