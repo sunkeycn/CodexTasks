@@ -52,6 +52,16 @@ jobs:
             tail -n 120 "$RUNNER_TEMP/build-app.log"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$result" != 0 ]]; then
+            python3 - <<'PYLOG'
+          import os
+          from pathlib import Path
+          log = Path(os.environ['RUNNER_TEMP'], 'build-app.log').read_text(errors='replace')
+          tail = '\n'.join(log.splitlines()[-120:])[-50000:]
+          escaped = tail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::error title=Application packaging diagnostic::' + escaped)
+          PYLOG
+          fi
           exit "$result"
       - name: Build and verify DMG
         id: package
