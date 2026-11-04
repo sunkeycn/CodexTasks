@@ -1,5 +1,12 @@
 import Foundation
 
+public enum SortPlacement: Sendable { case before, after }
+
+public enum TaskListFilter: String, CaseIterable, Sendable {
+    case active, all
+    public var label: String { self == .active ? "正在进行" : "全部" }
+}
+
 public enum TaskStatus: String, Codable, CaseIterable, Sendable {
     case todo, doing, done
     public var label: String {
@@ -14,6 +21,7 @@ public struct TaskItem: Identifiable, Equatable, Sendable {
     public let createdAt: Date
     public var parentID: Int64? = nil
     public var hasUnreadCompletion: Bool = false
+    public var details: String = ""
     public var number: String { String(format: "T#%02lld", id) }
     public var associationPrompt: String { "关联任务【\(number)】" }
     public var newSessionURL: URL {
@@ -45,6 +53,8 @@ public struct SessionItem: Identifiable, Equatable, Sendable {
     public let status: SessionStatus
     public let updatedAt: Date
     public let boundAt: Date
+    public var projectName: String = ""
+    public var projectLabel: String { projectName.isEmpty ? "未关联项目" : projectName }
 }
 
 public struct ObservedSession: Identifiable, Equatable, Sendable {
@@ -54,9 +64,10 @@ public struct ObservedSession: Identifiable, Equatable, Sendable {
     public var updatedAt: Date
     public var taskNumber: Int64?
     public var commandAt: Date?
-    public init(id: String, title: String, status: SessionStatus = .unknown, updatedAt: Date = Date(), taskNumber: Int64? = nil, commandAt: Date? = nil) {
+    public var projectName: String
+    public init(id: String, title: String, status: SessionStatus = .unknown, updatedAt: Date = Date(), taskNumber: Int64? = nil, commandAt: Date? = nil, projectName: String = "") {
         self.id = id; self.title = title; self.status = status; self.updatedAt = updatedAt
-        self.taskNumber = taskNumber; self.commandAt = commandAt
+        self.taskNumber = taskNumber; self.commandAt = commandAt; self.projectName = projectName
     }
 }
 

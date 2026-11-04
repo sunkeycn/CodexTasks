@@ -67,7 +67,7 @@ public struct HookEventStore: Sendable {
             let linked = existing?.taskID != nil
             let hasTask = record.taskNumber.map { n in snapshot.tasks.contains { $0.id == n && $0.createdAt <= (record.commandAt ?? .distantPast) } } ?? false
             guard merged[record.sessionID] != nil || linked || hasTask else { continue }
-            var observation = merged[record.sessionID] ?? ObservedSession(id: existing?.id ?? record.sessionID, title: existing?.title ?? "Codex Session", updatedAt: .distantPast)
+            var observation = merged[record.sessionID] ?? ObservedSession(id: existing?.id ?? record.sessionID, title: existing?.title ?? "Codex Session", updatedAt: .distantPast, projectName: existing?.projectName ?? "")
             if record.updatedAt >= observation.updatedAt {
                 observation.status = record.status == .running && date.timeIntervalSince(record.updatedAt) > runningTimeout ? .unknown : record.status
                 observation.updatedAt = record.updatedAt

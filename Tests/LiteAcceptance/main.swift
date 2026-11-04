@@ -132,7 +132,7 @@ PRAGMA user_version=1;
 """)
 let migrated = try TaskStore(url: migrationURL)
 let migratedSnapshot = try migrated.snapshot()
-check("migration-upgrades-to-schema-three", try scalar(migrationURL, "PRAGMA user_version") == 3)
+check("migration-upgrades-to-schema-five", try scalar(migrationURL, "PRAGMA user_version") == 5)
 check("migration-preserves-old-task", migratedSnapshot.rootTasks.first?.id == 7 && migratedSnapshot.rootTasks.first?.status == .doing && migratedSnapshot.rootTasks.first?.title == "保留原任务")
 check("migration-preserves-session-binding", try migrated.snapshot().sessions(for: 7).first?.id == "legacy-session")
 let migratedChild = try migrated.createTask(title: "升级后子任务", parentID: 7)
@@ -197,7 +197,7 @@ let upgradedTwo = try TaskStore(url: versionTwoURL)
 let upgradedTwoSnapshot = try upgradedTwo.snapshot()
 check("schema-two-upgrade-keeps-hierarchy-and-session", upgradedTwoSnapshot.children(of: 1).map(\.id) == [2] && upgradedTwoSnapshot.sessions(for: 2).count == 1)
 check("schema-two-upgrade-starts-without-old-badges", upgradedTwoSnapshot.tasks.allSatisfy { !$0.hasUnreadCompletion })
-check("schema-two-upgrades-to-three", try scalar(versionTwoURL, "PRAGMA user_version") == 3)
+check("schema-two-upgrades-to-five", try scalar(versionTwoURL, "PRAGMA user_version") == 5)
 
 // Synthetic Codex index and logs: no real user session or repository is needed.
 let home = root.appendingPathComponent("codex")
@@ -284,6 +284,8 @@ check("manually-linked-old-session-gets-live-state", linkedOnly.first { $0.id ==
 check("old-unlinked-sessions-stay-metadata-only", linkedOnly.filter { $0.id != idB }.allSatisfy { $0.taskNumber == nil })
 
 try runIntegrationChecks(root: root, base: base)
+try runOrderingChecks(root: root, base: base)
+try runDescriptionChecks(root: root, base: base)
 
 let report: [String: Any] = ["passed": failures.isEmpty, "checks":checks, "failures":failures, "count":checks.count]
 if let arg = CommandLine.arguments.firstIndex(of: "--report"), CommandLine.arguments.indices.contains(arg + 1) {

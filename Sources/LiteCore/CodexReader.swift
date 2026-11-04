@@ -53,8 +53,10 @@ public final class CodexReader: @unchecked Sendable {
         sqlite3_finalize(schema)
         guard Set(["id", "title", "rollout_path", "updated_at"]).isSubset(of: columns) else { throw LiteError.message("Codex 会话索引格式已变化，需要更新读取组件。") }
         let title = columns.contains("name") ? "COALESCE(NULLIF(name,''),title)" : "title"
+        let cwd = columns.contains("cwd") ? "cwd" : "''"
+        let projects = CodexProjectNames(home: home)
         var s: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT id,\(title),rollout_path,updated_at FROM threads ORDER BY updated_at DESC,id", -1, &s, nil) == SQLITE_OK else { throw LiteError.message("无法读取 Codex 会话列表。") }
+        guard sqlite3_prepare_v2(db, "SELECT id,\(title),rollout_path,updated_at,\(cwd) FROM threads ORDER BY updated_at DESC,id", -1, &s, nil) == SQLITE_OK else { throw LiteError.message("无法读取 Codex 会话列表。") }
         defer { sqlite3_finalize(s) }
         func text(_ i: Int32) -> String { sqlite3_column_text(s, i).map { String(cString: $0) } ?? "" }
         var result: [ObservedSession] = []
@@ -65,7 +67,7 @@ public final class CodexReader: @unchecked Sendable {
             let id = text(0), rawTime = sqlite3_column_double(s, 3)
             // The desktop index has used both epoch seconds and milliseconds.
             let updated = Date(timeIntervalSince1970: rawTime > 100_000_000_000 ? rawTime / 1000 : rawTime)
-            var observed = ObservedSession(id: id, title: text(1).isEmpty ? "Codex Session" : text(1), updatedAt: updated)
+            var observed = ObservedSession(id: id, title: text(1).isEmpty ? "Codex Session" : text(1), updatedAt: updated, projectName: projects.name(for: id, cwd: text(4)))
             let path = URL(fileURLWithPath: text(2)).resolvingSymlinksInPath().standardizedFileURL
             if isLog(path) && (updated >= notBefore || linkedSessionIDs.contains(id)) {
                 do {

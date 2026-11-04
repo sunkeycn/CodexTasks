@@ -57,10 +57,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if smokePath != nil {
                 preferences.removeObject(forKey: "lite.sidebarWidth")
                 preferences.removeObject(forKey: "lite.collapsedTasks")
+                preferences.removeObject(forKey: "lite.taskFilter")
             }
             if isolated { if try store.snapshot().tasks.isEmpty { try seed(store) } }
             let fixtures: [ObservedSession] = isolated ? [
-                ObservedSession(id: "00000000-0000-4000-8000-000000000001", title: "Codex Session", status: .running),
+                ObservedSession(id: "00000000-0000-4000-8000-000000000001", title: "Codex Session", status: .running, projectName: "Codex Tasks"),
                 ObservedSession(id: "00000000-0000-4000-8000-000000000002", title: "Codex Session", status: .completed),
                 ObservedSession(id: "00000000-0000-4000-8000-000000000003", title: "梳理任务交互与长标题展示"),
                 ObservedSession(id: "00000000-0000-4000-8000-000000000004", title: "检查多会话关联流程")
@@ -289,11 +290,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     private func seed(_ store: TaskStore) throws {
         let first = try store.createTask(title: "任务1")
+        try store.setTaskDetails(first, "## 目标\n完善任务详情与会话信息。\n\n- 支持 **Markdown** 描述\n- 显示会话所属项目\n\n> 编辑后自动保存，重启后保留。")
         _ = try store.createTask(title: "梳理任务交互与侧栏布局", parentID: first)
         _ = try store.createTask(title: "验证多会话关联", parentID: first)
         _ = try store.createTask(title: "优化任务与多个 Codex 会话的关联体验，并验证侧栏宽度调整与长标题的完整展示")
-        try store.attach(ObservedSession(id: "00000000-0000-4000-8000-000000000001", title: "Codex Session", status: .running), to: first)
-        let running = ObservedSession(id: "00000000-0000-4000-8000-000000000002", title: "Codex Session", status: .running)
+        try store.attach(ObservedSession(id: "00000000-0000-4000-8000-000000000001", title: "Codex Session", status: .running, projectName: "Codex Tasks"), to: first)
+        let running = ObservedSession(id: "00000000-0000-4000-8000-000000000002", title: "Codex Session", status: .running, projectName: "Codex Tasks")
         try store.attach(running, to: first)
         var completed = running; completed.status = .completed; completed.updatedAt = running.updatedAt.addingTimeInterval(1)
         try store.reconcile([completed])
@@ -303,6 +305,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         view.layoutSubtreeIfNeeded()
         guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw LiteError.message("无法生成窗口截图。") }
         view.cacheDisplay(in: view.bounds, to: bitmap)
+        compositeMarkdownSnapshots(in: view, onto: bitmap)
         guard let data = bitmap.representation(using: .png, properties: [:]) else { throw LiteError.message("截图编码失败。") }
         try data.write(to: URL(fileURLWithPath: path))
     }
@@ -341,6 +344,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.status(child, previousStatus == .done ? .todo : .done)
         checks["compactCompletionStaysCompact"] = windowMode == .compact
         model.status(child, previousStatus)
+        model.selectTask(child)
         toggleDetail()
         checks["headerToggleExpandsRightPane"] = windowMode == .normal && !presentation.isCompact
             && findSplitView(in: content)?.subviews.last?.isHidden == false && model.selectedTaskID == child.id
@@ -390,6 +394,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             checks["sidebarStartsAt300"] = panel.contentView.flatMap { findSplitView(in: $0)?.subviews.first?.frame.width }.map { abs($0 - 300) < 2 } ?? false
             checks["treeGroupsSeededSubtasks"] = model.snapshot.outlineTasks.prefix(3).map(\.parentID) == [nil, model.selectedTaskID, model.selectedTaskID]
             checks["taskHasTwoIndependentSessions"] = model.sessions.count == 2 && Set(model.sessions.map(\.status)).count == 2
+            checks.merge(runMarkdownAcceptance(in: content)) { _, new in new }
             if let screenshot = argument("--screenshot-output") { try capture(screenshot); checks["screenshotWritten"] = FileManager.default.fileExists(atPath: screenshot) }
             let first = model.selectedTask!
             checks["completionBadgeFromRunningTransition"] = model.hasUnreadCompletion(first)
@@ -440,6 +445,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             checks["deleteTask"] = !model.snapshot.tasks.contains { $0.id == created.id }
             checks["otherTaskKeepsMultipleSessions"] = model.snapshot.sessions(for: first.id).count == 2
             model.status(first, .todo); model.selectedTaskID = first.id
+            checks.merge(try runTaskListAcceptance(model: model)) { _, new in new }
             checks["noModelErrors"] = model.errorMessage == nil
             try checkWindowModes(&checks)
             checks.merge(try runSettingsAcceptance(directory: model.store.url.deletingLastPathComponent(), helper: model.bundledHookHelper)) { _, new in new }

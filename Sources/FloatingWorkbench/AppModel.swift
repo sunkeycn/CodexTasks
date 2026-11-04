@@ -10,6 +10,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var collapsedTaskIDs: Set<Int64> = [] {
         didSet { preferences.set(collapsedTaskIDs.sorted().map(String.init), forKey: "lite.collapsedTasks") }
     }
+    @Published var taskFilter: TaskListFilter = .active {
+        didSet {
+            preferences.set(taskFilter.rawValue, forKey: "lite.taskFilter")
+            normalizeSelection()
+        }
+    }
     @Published var isRecordingShortcut = false
     var applyWindowShortcut: ((WindowShortcut) throws -> Void)?
     @Published var errorMessage: String?
@@ -38,7 +44,14 @@ final class AppModel: ObservableObject {
     var sessions: [SessionItem] { selectedTaskID.map { snapshot.sessions(for: $0) } ?? [] }
     var pickerMessage: String? { sessionReadError }
     var visibleTasks: [TaskItem] {
-        snapshot.rootTasks.flatMap { [$0] + (collapsedTaskIDs.contains($0.id) ? [] : snapshot.children(of: $0.id)) }
+        snapshot.rootTasks.flatMap { root -> [TaskItem] in
+            let children = snapshot.children(of: root.id)
+            if taskFilter == .active && root.status == .done {
+                // A completed parent must not hide its unfinished children.
+                return children.filter { $0.status != .done }
+            }
+            return [root] + (collapsedTaskIDs.contains(root.id) ? [] : children.filter { taskFilter == .all || $0.status != .done })
+        }
     }
     var sidebarWidth: CGFloat {
         let saved = preferences.double(forKey: "lite.sidebarWidth")
@@ -74,7 +87,8 @@ final class AppModel: ObservableObject {
         self.observations = initialObservations
         self.collapsedTaskIDs = Set((preferences.stringArray(forKey: "lite.collapsedTasks") ?? []).compactMap(Int64.init))
         self.draft = preferences.string(forKey: "lite.quickDraft") ?? ""
-        snapshot = try store.snapshot(); selectedTaskID = snapshot.tasks.first?.id
+        self.taskFilter = TaskListFilter(rawValue: preferences.string(forKey: "lite.taskFilter") ?? "") ?? .active
+        snapshot = try store.snapshot(); selectedTaskID = visibleTasks.first?.id
         errorMessage = configurationError
     }
     func start() {
@@ -186,7 +200,7 @@ final class AppModel: ObservableObject {
         normalizeSelection()
     }
     private func normalizeSelection() {
-        if !snapshot.tasks.contains(where: { $0.id == selectedTaskID }) { selectedTaskID = snapshot.tasks.first?.id }
+        if !visibleTasks.contains(where: { $0.id == selectedTaskID }) { selectedTaskID = visibleTasks.first?.id }
     }
     @discardableResult func perform(_ operation: () throws -> Void) -> Bool {
         do { try operation(); try refresh(); return true }
@@ -206,19 +220,31 @@ final class AppModel: ObservableObject {
         guard perform({ id = try store.createTask(title: title, parentID: parent.id) }) else { return false }
         collapsedTaskIDs.remove(parent.id)
         selectedTaskID = id
+        normalizeSelection()
         if let task = selectedTask { copyPrompt(task) }
         scheduleRead(delay: 0)
         return true
+    }
+    func moveTask(_ id: Int64, relativeTo target: TaskItem, placement: SortPlacement) {
+        perform { try store.moveTask(id, relativeTo: target.id, placement: placement) }
+    }
+    func moveSession(_ id: String, relativeTo target: SessionItem, in taskID: Int64, placement: SortPlacement) {
+        perform { try store.moveSession(id, relativeTo: target.id, in: taskID, placement: placement) }
     }
     func status(_ task: TaskItem, _ status: TaskStatus) { perform { try store.setStatus(task.id, status) } }
     func rename(_ task: TaskItem, _ title: String) {
         guard title.trimmingCharacters(in: .whitespacesAndNewlines) != task.title else { return }
         perform { try store.renameTask(task.id, title: title) }
     }
+    @discardableResult func updateDetails(_ taskID: Int64, _ details: String) -> Bool {
+        guard let task = snapshot.tasks.first(where: { $0.id == taskID }) else { return false }
+        guard task.details != details else { return true }
+        return perform { try store.setTaskDetails(taskID, details) }
+    }
     func delete(_ task: TaskItem) {
-        let position = snapshot.outlineTasks.firstIndex { $0.id == task.id } ?? 0
+        let position = visibleTasks.firstIndex { $0.id == task.id } ?? 0
         guard perform({ try store.deleteTask(task.id) }) else { return }
-        if !snapshot.tasks.isEmpty { selectedTaskID = snapshot.outlineTasks[min(position, snapshot.tasks.count - 1)].id }
+        selectedTaskID = visibleTasks.isEmpty ? nil : visibleTasks[min(position, visibleTasks.count - 1)].id
     }
     func attach(_ session: ObservedSession, to task: TaskItem) { if perform({ try store.attach(session, to: task.id) }) { scheduleRead(delay: 0) } }
     func detach(_ session: SessionItem) { perform { try store.detach(session.id) } }

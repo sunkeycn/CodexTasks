@@ -19,7 +19,7 @@ public final class TaskStore: @unchecked Sendable {
             sqlite3_busy_timeout(db, 3000)
             let version = try scalar("PRAGMA user_version")
             let applicationID = try scalar("PRAGMA application_id")
-            guard (version == 0 && applicationID == 0) || ((1...3).contains(version) && applicationID == 0x43544C54) else {
+            guard (version == 0 && applicationID == 0) || ((1...5).contains(version) && applicationID == 0x43544C54) else {
                 throw LiteError.message("该文件不是受支持的轻量版数据库，已停止读取。")
             }
             if version == 0 {
@@ -73,6 +73,25 @@ public final class TaskStore: @unchecked Sendable {
                     PRAGMA user_version=3;
                     """)
                 }
+                if try scalar("PRAGMA user_version") == 3 {
+                    try execute("""
+                    ALTER TABLE tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+                    UPDATE tasks SET sort_order=id;
+                    ALTER TABLE sessions ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+                    WITH ranked AS (SELECT id,ROW_NUMBER() OVER (ORDER BY bound_at,id) AS position FROM sessions)
+                    UPDATE sessions SET sort_order=(SELECT position FROM ranked WHERE ranked.id=sessions.id);
+                    CREATE INDEX tasks_by_order ON tasks(parent_id,sort_order,id);
+                    CREATE INDEX sessions_by_order ON sessions(task_id,sort_order,id);
+                    PRAGMA user_version=4;
+                    """)
+                }
+                if try scalar("PRAGMA user_version") == 4 {
+                    try execute("""
+                    ALTER TABLE tasks ADD COLUMN details TEXT NOT NULL DEFAULT '';
+                    ALTER TABLE sessions ADD COLUMN project_name TEXT NOT NULL DEFAULT '';
+                    PRAGMA user_version=5;
+                    """)
+                }
             }
             try execute("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")
         } catch {
@@ -116,19 +135,19 @@ public final class TaskStore: @unchecked Sendable {
         try execute("BEGIN")
         do {
             var tasks: [TaskItem] = [], sessions: [SessionItem] = []
-            let t = try statement("SELECT id,title,status,created_at,parent_id,unread_completion FROM tasks ORDER BY id ASC")
+            let t = try statement("SELECT id,title,status,created_at,parent_id,unread_completion,details FROM tasks ORDER BY sort_order,id")
             defer { sqlite3_finalize(t) }
             var code = sqlite3_step(t)
             while code == SQLITE_ROW {
-                tasks.append(TaskItem(id: sqlite3_column_int64(t, 0), title: text(t, 1), status: TaskStatus(rawValue: text(t, 2)) ?? .todo, createdAt: Date(timeIntervalSince1970: sqlite3_column_double(t, 3)), parentID: sqlite3_column_type(t, 4) == SQLITE_NULL ? nil : sqlite3_column_int64(t, 4), hasUnreadCompletion: sqlite3_column_int(t, 5) != 0))
+                tasks.append(TaskItem(id: sqlite3_column_int64(t, 0), title: text(t, 1), status: TaskStatus(rawValue: text(t, 2)) ?? .todo, createdAt: Date(timeIntervalSince1970: sqlite3_column_double(t, 3)), parentID: sqlite3_column_type(t, 4) == SQLITE_NULL ? nil : sqlite3_column_int64(t, 4), hasUnreadCompletion: sqlite3_column_int(t, 5) != 0, details: text(t, 6)))
                 code = sqlite3_step(t)
             }
             guard code == SQLITE_DONE else { throw databaseError() }
-            let s = try statement("SELECT id,task_id,title,status,updated_at,bound_at FROM sessions ORDER BY bound_at ASC,id")
+            let s = try statement("SELECT id,task_id,title,status,updated_at,bound_at,project_name FROM sessions ORDER BY sort_order,id")
             defer { sqlite3_finalize(s) }
             code = sqlite3_step(s)
             while code == SQLITE_ROW {
-                sessions.append(SessionItem(id: text(s, 0), taskID: sqlite3_column_type(s, 1) == SQLITE_NULL ? nil : sqlite3_column_int64(s, 1), title: text(s, 2), status: SessionStatus(rawValue: text(s, 3)) ?? .unknown, updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(s, 4)), boundAt: Date(timeIntervalSince1970: sqlite3_column_double(s, 5))))
+                sessions.append(SessionItem(id: text(s, 0), taskID: sqlite3_column_type(s, 1) == SQLITE_NULL ? nil : sqlite3_column_int64(s, 1), title: text(s, 2), status: SessionStatus(rawValue: text(s, 3)) ?? .unknown, updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(s, 4)), boundAt: Date(timeIntervalSince1970: sqlite3_column_double(s, 5)), projectName: text(s, 6)))
                 code = sqlite3_step(s)
             }
             guard code == SQLITE_DONE else { throw databaseError() }
@@ -146,11 +165,68 @@ public final class TaskStore: @unchecked Sendable {
                 guard sqlite3_step(parent) == SQLITE_ROW else { throw LiteError.message("父任务不存在，无法创建子任务。") }
                 guard sqlite3_column_type(parent, 0) == SQLITE_NULL else { throw LiteError.message("只支持一层子任务，不能在子任务下继续创建。") }
             }
-            let s = try statement("INSERT INTO tasks(title,created_at,parent_id) VALUES (?,?,?)"); defer { sqlite3_finalize(s) }
+            let s = try statement("INSERT INTO tasks(title,created_at,parent_id,sort_order) VALUES (?,?,?,(SELECT COALESCE(MAX(sort_order)+1,0) FROM tasks))"); defer { sqlite3_finalize(s) }
             bind(clean, s, 1); sqlite3_bind_double(s, 2, date.timeIntervalSince1970)
             if let parentID { sqlite3_bind_int64(s, 3, parentID) } else { sqlite3_bind_null(s, 3) }
             try finish(s)
             return sqlite3_last_insert_rowid(db)
+        }
+    }
+    public func moveTask(_ id: Int64, relativeTo targetID: Int64, placement: SortPlacement) throws {
+        try transaction {
+            let current = try orderedTaskParents()
+            guard let source = current.first(where: { $0.id == id }),
+                  let target = current.first(where: { $0.id == targetID }), source.parentID == target.parentID else {
+                throw LiteError.message("只能在同一级任务之间调整顺序。")
+            }
+            guard id != targetID else { return }
+            var siblings = current.filter { $0.parentID == source.parentID }.map(\.id)
+            siblings.removeAll { $0 == id }
+            let index = siblings.firstIndex(of: targetID)!
+            siblings.insert(id, at: index + (placement == .after ? 1 : 0))
+            let update = try statement("UPDATE tasks SET sort_order=? WHERE id=?")
+            defer { sqlite3_finalize(update) }
+            for (position, taskID) in siblings.enumerated() {
+                sqlite3_reset(update)
+                sqlite3_bind_int64(update, 1, Int64(position)); sqlite3_bind_int64(update, 2, taskID)
+                try finish(update)
+            }
+        }
+    }
+    // Reordering is called inside a write transaction, so it cannot nest snapshot()'s BEGIN.
+    private func orderedTaskParents() throws -> [(id: Int64, parentID: Int64?)] {
+        let query = try statement("SELECT id,parent_id FROM tasks ORDER BY sort_order,id")
+        defer { sqlite3_finalize(query) }
+        var result: [(Int64, Int64?)] = []
+        var code = sqlite3_step(query)
+        while code == SQLITE_ROW {
+            result.append((sqlite3_column_int64(query, 0), sqlite3_column_type(query, 1) == SQLITE_NULL ? nil : sqlite3_column_int64(query, 1)))
+            code = sqlite3_step(query)
+        }
+        guard code == SQLITE_DONE else { throw databaseError() }
+        return result
+    }
+    public func moveSession(_ id: String, relativeTo targetID: String, in taskID: Int64, placement: SortPlacement) throws {
+        try transaction {
+            let query = try statement("SELECT id FROM sessions WHERE task_id=? ORDER BY sort_order,id")
+            defer { sqlite3_finalize(query) }
+            sqlite3_bind_int64(query, 1, taskID)
+            var ids: [String] = []
+            var code = sqlite3_step(query)
+            while code == SQLITE_ROW { ids.append(text(query, 0)); code = sqlite3_step(query) }
+            guard code == SQLITE_DONE else { throw databaseError() }
+            guard ids.contains(id), ids.contains(targetID) else { throw LiteError.message("只能调整当前任务已关联会话的顺序。") }
+            guard id != targetID else { return }
+            ids.removeAll { $0 == id }
+            let index = ids.firstIndex(of: targetID)!
+            ids.insert(id, at: index + (placement == .after ? 1 : 0))
+            let update = try statement("UPDATE sessions SET sort_order=? WHERE id=? AND task_id=?")
+            defer { sqlite3_finalize(update) }
+            for (position, sessionID) in ids.enumerated() {
+                sqlite3_reset(update)
+                sqlite3_bind_int64(update, 1, Int64(position)); bind(sessionID, update, 2)
+                sqlite3_bind_int64(update, 3, taskID); try finish(update)
+            }
         }
     }
     public func markTaskRead(_ id: Int64) throws {
@@ -165,6 +241,12 @@ public final class TaskStore: @unchecked Sendable {
         try transaction {
             let s = try statement("UPDATE tasks SET title=? WHERE id=?"); defer { sqlite3_finalize(s) }
             bind(clean, s, 1); sqlite3_bind_int64(s, 2, id); try finish(s)
+        }
+    }
+    public func setTaskDetails(_ id: Int64, _ details: String) throws {
+        try transaction {
+            let s = try statement("UPDATE tasks SET details=? WHERE id=?"); defer { sqlite3_finalize(s) }
+            bind(details, s, 1); sqlite3_bind_int64(s, 2, id); try finish(s)
         }
     }
     public func setStatus(_ id: Int64, _ status: TaskStatus) throws {
@@ -194,8 +276,12 @@ public final class TaskStore: @unchecked Sendable {
     }
     private func upsert(_ observed: ObservedSession, taskID: Int64?, boundAt: Date) throws {
         let s = try statement("""
-        INSERT INTO sessions(id,task_id,title,status,updated_at,bound_at) VALUES (?,?,?,?,?,?)
-        ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,
+        INSERT INTO sessions(id,task_id,title,status,updated_at,bound_at,sort_order,project_name)
+        VALUES (?,?,?,?,?,?,(SELECT COALESCE(MAX(sort_order)+1,0) FROM sessions WHERE task_id IS ?),?)
+        ON CONFLICT(id) DO UPDATE SET
+        sort_order=CASE WHEN sessions.task_id IS excluded.task_id THEN sessions.sort_order ELSE excluded.sort_order END,
+        task_id=excluded.task_id,
+        project_name=excluded.project_name,
         title=CASE WHEN excluded.updated_at>=sessions.updated_at THEN excluded.title ELSE sessions.title END,
         status=CASE WHEN excluded.updated_at>=sessions.updated_at THEN excluded.status ELSE sessions.status END,
         updated_at=MAX(sessions.updated_at,excluded.updated_at),bound_at=excluded.bound_at
@@ -207,6 +293,8 @@ public final class TaskStore: @unchecked Sendable {
         bind(observed.status.rawValue, s, 4)
         sqlite3_bind_double(s, 5, observed.updatedAt.timeIntervalSince1970)
         sqlite3_bind_double(s, 6, boundAt.timeIntervalSince1970)
+        if let taskID { sqlite3_bind_int64(s, 7, taskID) } else { sqlite3_bind_null(s, 7) }
+        bind(observed.projectName, s, 8)
         try finish(s)
     }
     /// Newer explicit user commands may reassign one session. Other sessions on that task stay attached.

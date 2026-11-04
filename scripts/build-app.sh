@@ -12,6 +12,7 @@ APP_DIRECTORY="$STAGING_DIRECTORY/Codex Tasks.app"
 mkdir -p "$APP_DIRECTORY/Contents/MacOS" "$APP_DIRECTORY/Contents/Resources" "$APP_DIRECTORY/Contents/Helpers"
 cp "$BINARY_DIRECTORY/FloatingWorkbench" "$APP_DIRECTORY/Contents/MacOS/FloatingWorkbench"
 cp "$BINARY_DIRECTORY/CodexTasksHook" "$APP_DIRECTORY/Contents/Helpers/CodexTasksHook"
+cp -R "$BINARY_DIRECTORY/CodexTasksLite_FloatingWorkbench.bundle" "$APP_DIRECTORY/Contents/Resources/"
 cp "$TASK_ROOT/LICENSE" "$APP_DIRECTORY/Contents/Resources/LICENSE.txt"
 if [[ "${UNIVERSAL:-0}" == "1" ]]; then
   swift build -c "$BUILD_CONFIGURATION" --triple arm64-apple-macosx13.0 --product FloatingWorkbench
@@ -36,8 +37,8 @@ cat > "$APP_DIRECTORY/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>Codex Tasks</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>2.2.1</string>
-<key>CFBundleVersion</key><string>27</string>
+<key>CFBundleShortVersionString</key><string>2.4.0</string>
+<key>CFBundleVersion</key><string>30</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
@@ -54,6 +55,9 @@ codesign --verify --deep --strict "$APP_DIRECTORY"
 codesign --verify --strict "$STAGING_DIRECTORY/verified/Codex Tasks.app/Contents/Helpers/CodexTasksHook"
 codesign --verify --deep --strict "$STAGING_DIRECTORY/verified/Codex Tasks.app"
 cmp "$TASK_ROOT/LICENSE" "$STAGING_DIRECTORY/verified/Codex Tasks.app/Contents/Resources/LICENSE.txt"
+for ASSET in marked.js purify.js; do
+  cmp "$TASK_ROOT/Sources/FloatingWorkbench/Resources/Markdown/$ASSET" "$STAGING_DIRECTORY/verified/Codex Tasks.app/Contents/Resources/CodexTasksLite_FloatingWorkbench.bundle/Markdown/$ASSET"
+done
 if [[ "${RELAUNCH:-1}" == "1" ]]; then
   swift "$TASK_ROOT/scripts/manage-app.swift" stop "$APP_DIRECTORY"
 fi

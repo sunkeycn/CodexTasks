@@ -18,7 +18,7 @@
 ## 有意保留的兼容性常量
 
 - `ai.sunkey.floatingworkbench`：已发布应用的 bundle ID，保持已有用户偏好和应用身份。
-- SQLite `application_id`、schema 3、字段和外键：已有任务数据库的兼容协议，不宜作为用户设置。
+- SQLite `application_id`、schema 5、字段和外键：已有任务数据库的兼容协议，不宜作为用户设置。
 - `codex://threads/<UUID>`、Hooks 事件名和输入字段：与 Codex 集成的协议；私有索引和日志结构由适配器负责版本兼容。
 - `Codex Tasks`、输出文件名、默认数据子目录：产品标识；无用户名、凭据、服务器地址或端口依赖。
 - `⌘⇧空格`：可配置的窗口切换默认值，旧设置自动补齐；固定菜单快捷键与默认布局尺寸仍是产品交互默认值。侧栏宽度和折叠状态自动保留。
@@ -27,7 +27,7 @@
 
 ## 本地文件与迁移
 
-- `tasks.sqlite`：任务、父子关系、会话关联、未读状态；备份使用 SQLite 备份接口。
+- `tasks.sqlite`：任务、Markdown 描述、父子关系、会话关联、所属项目名、排序及未读状态；备份使用 SQLite 备份接口。
 - `settings.json`：当前电脑的连接配置与窗口切换快捷键（文件权限 0600）。
 - `Integration/CodexTasksHook`：随当前版本安装的可执行助手；升级应用后可点击安装／更新重新部署。
 - `Integration/events/<session UUID>.json`：执行状态与显式关联元数据；不保存正文、工作目录，不是聊天备份。

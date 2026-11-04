@@ -87,21 +87,32 @@ struct RootView: View {
         }
     }
     private var taskList: some View {
-        ScrollView {
-            LazyVStack(spacing: 8) {
-                ForEach(model.visibleTasks) { task in
-                    taskRow(task)
-                }
-                if model.snapshot.tasks.isEmpty {
-                    Text("还没有任务").font(.system(size: 12)).foregroundColor(.secondary).padding(.top, 16)
-                }
-            }.padding(12)
-        }.frame(maxHeight: .infinity).background(sidebarColor)
-            .accessibilityIdentifier(presentation.isCompact ? "compact-task-list" : "task-list")
+        VStack(spacing: 0) {
+            Picker("任务范围", selection: $model.taskFilter) {
+                ForEach(TaskListFilter.allCases, id: \.self) { filter in Text(filter.label).tag(filter) }
+            }
+            .pickerStyle(.segmented).labelsHidden()
+            .accessibilityIdentifier("task-filter")
+            .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 4)
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(model.visibleTasks) { task in taskRow(task) }
+                    if model.visibleTasks.isEmpty {
+                        Text(model.snapshot.tasks.isEmpty ? "还没有任务" : "没有正在进行的任务")
+                            .font(.system(size: 12)).foregroundColor(.secondary).padding(.top, 16)
+                    }
+                }.padding(12)
+            }.frame(maxHeight: .infinity)
+                .accessibilityIdentifier(presentation.isCompact ? "compact-task-list" : "task-list")
+        }.background(sidebarColor)
     }
     private func taskRow(_ task: TaskItem) -> some View {
         TaskCard(model: model, task: task, onSelect: { model.selectTask(task) },
                  onDisclosure: { model.toggleExpanded(task) })
+        .allowsHitTesting(false)
+        .modifier(CardReordering(id: String(task.id), scope: task.parentID.map { "task.children.\($0)" } ?? "task.root", onClick: { model.selectTask(task) }) { source, placement in
+            if let id = Int64(source) { model.moveTask(id, relativeTo: task, placement: placement) }
+        })
         .contextMenu {
             if task.parentID == nil { Button("新建子任务") { addingChildTo = task } }
             Button("复制关联指令") { model.copyPrompt(task) }
@@ -123,17 +134,22 @@ struct RootView: View {
     }
 }
 
-/// The completion control is a sibling of the card's background button, so it never opens details.
+/// Mouse actions use measured control bounds; accessibility exposes the same independent actions.
 private struct TaskCard: View {
     @ObservedObject var model: AppModel
     let task: TaskItem
     let onSelect: () -> Void
     let onDisclosure: () -> Void
+    private var isIndented: Bool { task.parentID.map { id in model.visibleTasks.contains { $0.id == id } } ?? false }
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Button { model.status(task, task.status == .done ? .todo : .done) } label: {
-                StatusCircle(status: task.status).frame(width: 18, height: 18)
-            }.help(task.status == .done ? "标为未开始" : "标为已完成").accessibilityLabel("切换 \(task.number) 完成状态")
+        HStack(alignment: .top, spacing: 8) {
+            StatusCircle(status: task.status).frame(width: 18, height: 18)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { model.status(task, task.status == .done ? .todo : .done) }
+            .anchorPreference(key: CardClickTargetsKey.self, value: .bounds) {
+                [CardClickTarget(bounds: $0, action: { model.status(task, task.status == .done ? .todo : .done) })]
+            }
+            .help(task.status == .done ? "标为未开始" : "标为已完成").accessibilityLabel("切换 \(task.number) 完成状态")
             Text(task.title).font(.system(size: 13, weight: .medium))
                 .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading).help(task.title).allowsHitTesting(false)
@@ -144,26 +160,29 @@ private struct TaskCard: View {
                     .allowsHitTesting(false)
             }
             if !model.snapshot.children(of: task.id).isEmpty {
-                Button(action: onDisclosure) {
-                    Image(systemName: model.collapsedTaskIDs.contains(task.id) ? "chevron.down" : "chevron.up")
-                        .font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
-                        .frame(width: 18, height: 18).contentShape(Rectangle())
-                }.help(model.collapsedTaskIDs.contains(task.id) ? "展开子任务" : "折叠子任务")
+                Image(systemName: model.collapsedTaskIDs.contains(task.id) ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                    .frame(width: 18, height: 18).contentShape(Rectangle())
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { onDisclosure() }
+                .anchorPreference(key: CardClickTargetsKey.self, value: .bounds) {
+                    [CardClickTarget(bounds: $0, action: onDisclosure)]
+                }
+                .help(model.collapsedTaskIDs.contains(task.id) ? "展开子任务" : "折叠子任务")
                     .accessibilityLabel(model.collapsedTaskIDs.contains(task.id) ? "展开子任务" : "折叠子任务")
                     .accessibilityIdentifier("task-disclosure-\(task.id)")
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 13)
         .background {
-            Button(action: onSelect) {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(model.selectedTaskID == task.id ? accent.opacity(0.09) : Color.white.opacity(0.75))
-                    .contentShape(RoundedRectangle(cornerRadius: 10))
-            }.buttonStyle(.plain).accessibilityLabel(task.title).accessibilityIdentifier("task-row-\(task.id)")
+            RoundedRectangle(cornerRadius: 10)
+                .fill(model.selectedTaskID == task.id ? accent.opacity(0.09) : Color.white.opacity(0.75))
+                .accessibilityAddTraits(.isButton).accessibilityAction { onSelect() }
+                .accessibilityLabel(task.title).accessibilityIdentifier("task-row-\(task.id)")
         }
-        .padding(.leading, task.parentID == nil ? 0 : 22)
+        .padding(.leading, isIndented ? 22 : 0)
         .overlay(alignment: .leading) {
-            if task.parentID != nil {
+            if isIndented {
                 Image(systemName: "arrow.turn.down.right").font(.system(size: 10))
                     .foregroundColor(ink.opacity(0.3)).frame(width: 16).allowsHitTesting(false)
             }
@@ -277,20 +296,30 @@ private struct TaskDetailView: View {
             }
             ScrollView {
                 LazyVStack(spacing: 12) {
+                    TaskDescriptionCard(taskID: task.id, details: task.details, save: model.updateDetails)
                     ForEach(model.snapshot.sessions(for: task.id)) { session in
-                        Button { model.open(session) } label: {
-                            HStack(alignment: .center, spacing: 20) {
+                        HStack(alignment: .center, spacing: 14) {
+                            VStack(alignment: .leading, spacing: 6) {
                                 Text(session.title).font(.system(size: 13, weight: .semibold))
                                     .lineLimit(3).multilineTextAlignment(.leading)
-                                Spacer(minLength: 0)
-                                SessionStatusTag(status: session.status)
-                            }
-                            .padding(.horizontal, 18).padding(.vertical, 18)
-                            .frame(maxWidth: .infinity, minHeight: 66, alignment: .leading)
-                            .contentShape(Rectangle()).taskCard()
+                                Label(session.projectLabel, systemImage: "folder")
+                                    .font(.system(size: 11)).foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }.allowsHitTesting(false)
+                            Spacer(minLength: 0)
+                            SessionStatusTag(status: session.status).allowsHitTesting(false)
                         }
+                        .padding(.horizontal, 18).padding(.vertical, 18)
+                        .frame(maxWidth: .infinity, minHeight: 66, alignment: .leading)
+                        .contentShape(Rectangle()).taskCard()
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityAction { model.open(session) }
                         .accessibilityIdentifier("session-\(session.id)")
-                        .help("在 Codex 中打开此会话")
+                        .help("所属项目：\(session.projectLabel)；点击在 Codex 中打开，拖动卡片任意位置调整顺序")
+                        .modifier(CardReordering(id: session.id, scope: "session.task.\(task.id)", onClick: { model.open(session) }) { source, placement in
+                            model.moveSession(source, relativeTo: session, in: task.id, placement: placement)
+                        })
                         .contextMenu {
                             Button("在 Codex 中打开") { model.open(session) }
                             Button("解除关联") { model.detach(session) }
