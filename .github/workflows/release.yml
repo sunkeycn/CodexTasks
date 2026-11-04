@@ -1,15 +1,15 @@
-name: Build and publish macOS release
+name: Recover approved v2.4.1 release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - 'codex/release-v2.4.1-recovery'
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-v2.4.1
   cancel-in-progress: false
 
 jobs:
@@ -20,9 +20,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: v2.4.1
       - name: Check tag and release notes
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: v2.4.1
         run: |
           python3 - <<'PY'
           import os, re
@@ -40,11 +41,55 @@ jobs:
         env:
           UNIVERSAL: '1'
           RELAUNCH: '0'
-        run: ./scripts/build-app.sh
+        run: |
+          # SwiftPM on this runner reuses the other architecture's product plan.
+          # Keep the approved tag untouched and disable that cache in the build environment.
+          git diff --exit-code v2.4.1 -- .
+          swift() {
+            if [[ "$1" == build ]]; then
+              shift
+              command swift build --disable-build-manifest-caching "$@"
+            else
+              command swift "$@"
+            fi
+          }
+          export -f swift
+          set +e
+          bash -x ./scripts/build-app.sh 2>&1 | tee "$RUNNER_TEMP/build-app.log"
+          result=${PIPESTATUS[0]}
+          {
+            echo '### Universal application build'
+            echo "Exit status: $result"
+            echo '```text'
+            tail -n 120 "$RUNNER_TEMP/build-app.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$result" != 0 ]]; then
+            python3 - <<'PYLOG'
+          import os
+          from pathlib import Path
+          log = Path(os.environ['RUNNER_TEMP'], 'build-app.log').read_text(errors='replace')
+          tail = '\n'.join(log.splitlines()[-120:])[-50000:]
+          escaped = tail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::error title=Application packaging diagnostic::' + escaped)
+          PYLOG
+          fi
+          exit "$result"
       - name: Build and verify DMG
         id: package
         run: |
-          ./scripts/build-dmg.sh
+          set +e
+          ./scripts/build-dmg.sh 2>&1 | tee "$RUNNER_TEMP/build-dmg.log"
+          result=${PIPESTATUS[0]}
+          {
+            echo '### DMG verification'
+            echo "Exit status: $result"
+            echo '```text'
+            tail -n 80 "$RUNNER_TEMP/build-dmg.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$result" != 0 ]]; then exit "$result"; fi
+          set -e
           VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' 'outputs/Codex Tasks.app/Contents/Info.plist')
           echo "directory=outputs/release-v$VERSION" >> "$GITHUB_OUTPUT"
       - name: Upload verified release assets
@@ -66,6 +111,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: v2.4.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: macOS-universal
@@ -76,10 +122,14 @@ jobs:
       - name: Create draft with attachments, then publish
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: v2.4.1
         run: |
           gh release create "$RELEASE_TAG" release/* \
             --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
             --title "Codex Tasks $RELEASE_TAG" \
             --notes-file "docs/releases/$RELEASE_TAG.md"
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          {
+            echo '### Published v2.4.1'
+            gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json url,assets --jq '.'
+          } >> "$GITHUB_STEP_SUMMARY"
