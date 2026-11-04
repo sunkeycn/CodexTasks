@@ -3,9 +3,11 @@ set -euo pipefail
 TASK_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$TASK_ROOT"
 BUILD_CONFIGURATION="${CONFIGURATION:-release}"
-swift build -c "$BUILD_CONFIGURATION" --product FloatingWorkbench
-swift build -c "$BUILD_CONFIGURATION" --product CodexTasksHook
-BINARY_DIRECTORY="$(swift build -c "$BUILD_CONFIGURATION" --show-bin-path)"
+# SwiftPM can reuse the wrong product plan when Universal builds switch architectures.
+# Recreate the build manifest while retaining compiled object caches.
+swift build --disable-build-manifest-caching -c "$BUILD_CONFIGURATION" --product FloatingWorkbench
+swift build --disable-build-manifest-caching -c "$BUILD_CONFIGURATION" --product CodexTasksHook
+BINARY_DIRECTORY="$(swift build --disable-build-manifest-caching -c "$BUILD_CONFIGURATION" --show-bin-path)"
 STAGING_DIRECTORY="$(mktemp -d "${TMPDIR:-/tmp}/floating-workbench-package.XXXXXX")"
 trap 'rm -rf "$STAGING_DIRECTORY"' EXIT
 APP_DIRECTORY="$STAGING_DIRECTORY/Codex Tasks.app"
@@ -15,10 +17,10 @@ cp "$BINARY_DIRECTORY/CodexTasksHook" "$APP_DIRECTORY/Contents/Helpers/CodexTask
 cp -R "$BINARY_DIRECTORY/CodexTasksLite_FloatingWorkbench.bundle" "$APP_DIRECTORY/Contents/Resources/"
 cp "$TASK_ROOT/LICENSE" "$APP_DIRECTORY/Contents/Resources/LICENSE.txt"
 if [[ "${UNIVERSAL:-0}" == "1" ]]; then
-  swift build -c "$BUILD_CONFIGURATION" --triple arm64-apple-macosx13.0 --product FloatingWorkbench
-  swift build -c "$BUILD_CONFIGURATION" --triple x86_64-apple-macosx13.0 --product FloatingWorkbench
-  swift build -c "$BUILD_CONFIGURATION" --triple arm64-apple-macosx13.0 --product CodexTasksHook
-  swift build -c "$BUILD_CONFIGURATION" --triple x86_64-apple-macosx13.0 --product CodexTasksHook
+  swift build --disable-build-manifest-caching -c "$BUILD_CONFIGURATION" --triple arm64-apple-macosx13.0 --product FloatingWorkbench
+  swift build --disable-build-manifest-caching -c "$BUILD_CONFIGURATION" --triple x86_64-apple-macosx13.0 --product FloatingWorkbench
+  swift build --disable-build-manifest-caching -c "$BUILD_CONFIGURATION" --triple arm64-apple-macosx13.0 --product CodexTasksHook
+  swift build --disable-build-manifest-caching -c "$BUILD_CONFIGURATION" --triple x86_64-apple-macosx13.0 --product CodexTasksHook
   lipo -create "$TASK_ROOT/.build/arm64-apple-macosx/$BUILD_CONFIGURATION/FloatingWorkbench" "$TASK_ROOT/.build/x86_64-apple-macosx/$BUILD_CONFIGURATION/FloatingWorkbench" -output "$APP_DIRECTORY/Contents/MacOS/FloatingWorkbench"
   lipo -create "$TASK_ROOT/.build/arm64-apple-macosx/$BUILD_CONFIGURATION/CodexTasksHook" "$TASK_ROOT/.build/x86_64-apple-macosx/$BUILD_CONFIGURATION/CodexTasksHook" -output "$APP_DIRECTORY/Contents/Helpers/CodexTasksHook"
   lipo "$APP_DIRECTORY/Contents/MacOS/FloatingWorkbench" -verify_arch arm64 x86_64
