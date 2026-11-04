@@ -24,6 +24,7 @@ public final class CodexReader: @unchecked Sendable {
         var commandAt: Date?
         var commandPosition: UInt64 = 0
         var state = SessionStatus.unknown
+        var activityAt = Date.distantPast
         var stateAt = Date.distantPast
         var statePosition: UInt64 = 0
     }
@@ -76,6 +77,7 @@ public final class CodexReader: @unchecked Sendable {
                     cursors[path.path] = cursor
                     observed.taskNumber = cursor.taskNumber; observed.commandAt = cursor.commandAt
                     observed.status = cursor.state
+                    observed.updatedAt = max(updated, cursor.activityAt)
                     if observed.status == .running && Date().timeIntervalSince(cursor.modified) > runningTimeout { observed.status = .unknown }
                 } catch {
                     // A missing/unreadable log must not turn a previously running session into a fake completion.
@@ -160,6 +162,8 @@ public final class CodexReader: @unchecked Sendable {
         guard let payload = record["payload"] as? [String: Any], let timestamp = record["timestamp"] as? String,
               let date = fractional.date(from: timestamp) ?? plain.date(from: timestamp) else { return }
         let type = record["type"] as? String
+        // Use event timestamps, never a poll time or a touched file's mtime.
+        if type == "event_msg" || type == "response_item" { cursor.activityAt = max(cursor.activityAt, date) }
         if type == "response_item", payload["type"] as? String == "message", payload["role"] as? String == "user" {
             let content = payload["content"] as? [[String: Any]] ?? []
             command(content.compactMap { $0["text"] as? String }.joined(separator: "\n"), at: date, position: position, cursor: &cursor)

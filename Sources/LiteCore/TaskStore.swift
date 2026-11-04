@@ -1,7 +1,8 @@
 import Foundation
 import CSQLite
 
-/// The lite database owns only tasks and sessions. It never opens or migrates the full database.
+/// The lite database owns tasks, sessions and their ordering preferences.
+/// It never opens or migrates the full database.
 public final class TaskStore: @unchecked Sendable {
     private var db: OpaquePointer?
     private let lock = NSRecursiveLock()
@@ -19,7 +20,7 @@ public final class TaskStore: @unchecked Sendable {
             sqlite3_busy_timeout(db, 3000)
             let version = try scalar("PRAGMA user_version")
             let applicationID = try scalar("PRAGMA application_id")
-            guard (version == 0 && applicationID == 0) || ((1...5).contains(version) && applicationID == 0x43544C54) else {
+            guard (version == 0 && applicationID == 0) || ((1...7).contains(version) && applicationID == 0x43544C54) else {
                 throw LiteError.message("该文件不是受支持的轻量版数据库，已停止读取。")
             }
             if version == 0 {
@@ -92,6 +93,40 @@ public final class TaskStore: @unchecked Sendable {
                     PRAGMA user_version=5;
                     """)
                 }
+                if try scalar("PRAGMA user_version") == 5 {
+                    try execute("""
+                    CREATE TABLE manual_ordering(scope TEXT PRIMARY KEY);
+                    -- Older versions appended automatically but did not track manual drags.
+                    -- Preserve groups that differ from that append order; untouched groups
+                    -- now follow time descending. Never rewrite existing ranks or records.
+                    WITH ranked AS (
+                        SELECT parent_id,
+                            ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY sort_order,id) AS actual,
+                            ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY id) AS appended
+                        FROM tasks
+                    )
+                    INSERT INTO manual_ordering SELECT DISTINCT 'tasks:' || COALESCE(parent_id,0)
+                    FROM ranked WHERE actual != appended;
+                    WITH ranked AS (
+                        SELECT task_id,
+                            ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY sort_order,id) AS actual,
+                            ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY bound_at,id) AS appended
+                        FROM sessions WHERE task_id IS NOT NULL
+                    )
+                    INSERT INTO manual_ordering SELECT DISTINCT 'sessions:' || task_id
+                    FROM ranked WHERE actual != appended;
+                    PRAGMA user_version=6;
+                    """)
+                }
+                if try scalar("PRAGMA user_version") == 6 {
+                    try execute("""
+                    ALTER TABLE sessions ADD COLUMN activity_order REAL NOT NULL DEFAULT 0;
+                    UPDATE sessions SET activity_order=updated_at WHERE NOT EXISTS (
+                        SELECT 1 FROM manual_ordering WHERE scope='sessions:' || sessions.task_id
+                    );
+                    PRAGMA user_version=7;
+                    """)
+                }
             }
             try execute("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")
         } catch {
@@ -129,13 +164,30 @@ public final class TaskStore: @unchecked Sendable {
         do { let value = try operation(); try execute("COMMIT"); return value }
         catch { try? execute("ROLLBACK"); throw error }
     }
+    // The same order drives display and the first drag, so untouched neighbors
+    // keep their visible positions when a list switches to manual ordering.
+    private let taskOrder = """
+    CASE WHEN EXISTS(SELECT 1 FROM manual_ordering WHERE scope='tasks:' || COALESCE(tasks.parent_id,0))
+    THEN sort_order END ASC,created_at DESC,id DESC
+    """
+    // Dragging clears the activity priority for the current list. Only a newer
+    // observed activity restores it, ahead of the saved manual ranks.
+    private let sessionOrder = """
+    activity_order DESC,CASE WHEN EXISTS(SELECT 1 FROM manual_ordering WHERE scope='sessions:' || sessions.task_id)
+    THEN sort_order END ASC,updated_at DESC,bound_at DESC,id DESC
+    """
+    private func markManualOrder(_ scope: String) throws {
+        let s = try statement("INSERT OR IGNORE INTO manual_ordering(scope) VALUES (?)")
+        defer { sqlite3_finalize(s) }
+        bind(scope, s, 1); try finish(s)
+    }
     public func snapshot() throws -> TaskSnapshot {
         // One read transaction keeps the two tables consistent across connections.
         lock.lock(); defer { lock.unlock() }
         try execute("BEGIN")
         do {
             var tasks: [TaskItem] = [], sessions: [SessionItem] = []
-            let t = try statement("SELECT id,title,status,created_at,parent_id,unread_completion,details FROM tasks ORDER BY sort_order,id")
+            let t = try statement("SELECT id,title,status,created_at,parent_id,unread_completion,details FROM tasks ORDER BY \(taskOrder)")
             defer { sqlite3_finalize(t) }
             var code = sqlite3_step(t)
             while code == SQLITE_ROW {
@@ -143,7 +195,7 @@ public final class TaskStore: @unchecked Sendable {
                 code = sqlite3_step(t)
             }
             guard code == SQLITE_DONE else { throw databaseError() }
-            let s = try statement("SELECT id,task_id,title,status,updated_at,bound_at,project_name FROM sessions ORDER BY sort_order,id")
+            let s = try statement("SELECT id,task_id,title,status,updated_at,bound_at,project_name FROM sessions ORDER BY \(sessionOrder)")
             defer { sqlite3_finalize(s) }
             code = sqlite3_step(s)
             while code == SQLITE_ROW {
@@ -181,9 +233,12 @@ public final class TaskStore: @unchecked Sendable {
             }
             guard id != targetID else { return }
             var siblings = current.filter { $0.parentID == source.parentID }.map(\.id)
+            let original = siblings
             siblings.removeAll { $0 == id }
             let index = siblings.firstIndex(of: targetID)!
             siblings.insert(id, at: index + (placement == .after ? 1 : 0))
+            guard siblings != original else { return }
+            try markManualOrder("tasks:\(source.parentID ?? 0)")
             let update = try statement("UPDATE tasks SET sort_order=? WHERE id=?")
             defer { sqlite3_finalize(update) }
             for (position, taskID) in siblings.enumerated() {
@@ -195,7 +250,7 @@ public final class TaskStore: @unchecked Sendable {
     }
     // Reordering is called inside a write transaction, so it cannot nest snapshot()'s BEGIN.
     private func orderedTaskParents() throws -> [(id: Int64, parentID: Int64?)] {
-        let query = try statement("SELECT id,parent_id FROM tasks ORDER BY sort_order,id")
+        let query = try statement("SELECT id,parent_id FROM tasks ORDER BY \(taskOrder)")
         defer { sqlite3_finalize(query) }
         var result: [(Int64, Int64?)] = []
         var code = sqlite3_step(query)
@@ -208,7 +263,7 @@ public final class TaskStore: @unchecked Sendable {
     }
     public func moveSession(_ id: String, relativeTo targetID: String, in taskID: Int64, placement: SortPlacement) throws {
         try transaction {
-            let query = try statement("SELECT id FROM sessions WHERE task_id=? ORDER BY sort_order,id")
+            let query = try statement("SELECT id FROM sessions WHERE task_id=? ORDER BY \(sessionOrder)")
             defer { sqlite3_finalize(query) }
             sqlite3_bind_int64(query, 1, taskID)
             var ids: [String] = []
@@ -217,10 +272,13 @@ public final class TaskStore: @unchecked Sendable {
             guard code == SQLITE_DONE else { throw databaseError() }
             guard ids.contains(id), ids.contains(targetID) else { throw LiteError.message("只能调整当前任务已关联会话的顺序。") }
             guard id != targetID else { return }
+            let original = ids
             ids.removeAll { $0 == id }
             let index = ids.firstIndex(of: targetID)!
             ids.insert(id, at: index + (placement == .after ? 1 : 0))
-            let update = try statement("UPDATE sessions SET sort_order=? WHERE id=? AND task_id=?")
+            guard ids != original else { return }
+            try markManualOrder("sessions:\(taskID)")
+            let update = try statement("UPDATE sessions SET sort_order=?,activity_order=0 WHERE id=? AND task_id=?")
             defer { sqlite3_finalize(update) }
             for (position, sessionID) in ids.enumerated() {
                 sqlite3_reset(update)
@@ -276,9 +334,11 @@ public final class TaskStore: @unchecked Sendable {
     }
     private func upsert(_ observed: ObservedSession, taskID: Int64?, boundAt: Date) throws {
         let s = try statement("""
-        INSERT INTO sessions(id,task_id,title,status,updated_at,bound_at,sort_order,project_name)
-        VALUES (?,?,?,?,?,?,(SELECT COALESCE(MAX(sort_order)+1,0) FROM sessions WHERE task_id IS ?),?)
+        INSERT INTO sessions(id,task_id,title,status,updated_at,bound_at,sort_order,project_name,activity_order)
+        VALUES (?,?,?,?,?,?,(SELECT COALESCE(MAX(sort_order)+1,0) FROM sessions WHERE task_id IS ?),?,?)
         ON CONFLICT(id) DO UPDATE SET
+        activity_order=CASE WHEN sessions.task_id IS NOT excluded.task_id OR excluded.updated_at>sessions.updated_at
+            THEN MAX(sessions.updated_at,excluded.updated_at) ELSE sessions.activity_order END,
         sort_order=CASE WHEN sessions.task_id IS excluded.task_id THEN sessions.sort_order ELSE excluded.sort_order END,
         task_id=excluded.task_id,
         project_name=excluded.project_name,
@@ -295,6 +355,7 @@ public final class TaskStore: @unchecked Sendable {
         sqlite3_bind_double(s, 6, boundAt.timeIntervalSince1970)
         if let taskID { sqlite3_bind_int64(s, 7, taskID) } else { sqlite3_bind_null(s, 7) }
         bind(observed.projectName, s, 8)
+        sqlite3_bind_double(s, 9, observed.updatedAt.timeIntervalSince1970)
         try finish(s)
     }
     /// Newer explicit user commands may reassign one session. Other sessions on that task stay attached.

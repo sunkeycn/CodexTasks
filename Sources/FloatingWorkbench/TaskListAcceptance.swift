@@ -54,5 +54,13 @@ func runTaskListAcceptance(model: AppModel) throws -> [String: Bool] {
     try model.refresh()
     checks["sessionOrderSurvivesModelRefresh"] = model.snapshot.sessions(for: sessionTask.id).prefix(2).map(\.id) == [sessions[1].id, sessions[0].id]
     model.moveSession(sessions[0].id, relativeTo: sessions[1], in: sessionTask.id, placement: .before)
+    let bottom = model.snapshot.sessions(for: sessionTask.id).last!
+    let nextActivity = model.snapshot.sessions(for: sessionTask.id).map(\.updatedAt).max()!.addingTimeInterval(1)
+    try model.store.reconcile([ObservedSession(id: bottom.id, title: bottom.title, status: bottom.status, updatedAt: nextActivity, projectName: bottom.projectName)])
+    try model.refresh()
+    checks["sessionNewActivityOverridesManualBottomPosition"] = model.snapshot.sessions(for: sessionTask.id).first?.id == bottom.id
+    try model.refresh()
+    checks["sessionActivityOrderSurvivesModelRefresh"] = model.snapshot.sessions(for: sessionTask.id).first?.id == bottom.id
+    checks.merge(try runTaskActivityAcceptance()) { _, new in new }
     return checks
 }

@@ -164,11 +164,20 @@ private struct TaskCard: View {
             Text(task.title).font(.system(size: 13, weight: .medium))
                 .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading).help(task.title).allowsHitTesting(false)
-            if model.hasUnreadCompletion(task) {
-                Circle().fill(Color.red).frame(width: 7, height: 7).padding(.top, 5)
+            switch model.sessionActivity(task) {
+            case .running:
+                SessionActivitySpinner().padding(.top, 3)
+                    .help("任务或子任务有会话正在运行")
+                    .accessibilityLabel("有会话正在运行").accessibilityIdentifier("task-running-\(task.id)")
+                    .allowsHitTesting(false)
+            case .unreadCompletion:
+                Circle().fill(Color.red).frame(width: 7, height: 7)
+                    .frame(width: 12, height: 12).padding(.top, 3)
                     .help("有新的会话运行完成，点击任务查看")
                     .accessibilityLabel("有新的会话运行完成").accessibilityIdentifier("task-unread-\(task.id)")
                     .allowsHitTesting(false)
+            case .none:
+                EmptyView()
             }
             if !model.snapshot.children(of: task.id).isEmpty {
                 Image(systemName: model.collapsedTaskIDs.contains(task.id) ? "chevron.down" : "chevron.up")
@@ -237,6 +246,17 @@ private struct TaskNumberTag: View {
     var body: some View {
         Text(number).font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundColor(accent)
             .padding(.horizontal, 6).padding(.vertical, 3).background(accent.opacity(0.08)).cornerRadius(4).fixedSize()
+    }
+}
+
+private struct SessionActivitySpinner: View {
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+            let progress = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.9) / 0.9
+            Circle().trim(from: 0, to: 0.72)
+                .stroke(accent, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                .rotationEffect(.degrees(progress * 360))
+        }.frame(width: 12, height: 12)
     }
 }
 

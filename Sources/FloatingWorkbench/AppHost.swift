@@ -66,7 +66,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 ObservedSession(id: "00000000-0000-4000-8000-000000000004", title: "检查多会话关联流程")
             ] : []
             model = try AppModel(store: store, preferences: preferences, initialObservations: fixtures)
-            if isolated { model.selectedTaskID = model.snapshot.tasks.first?.id }
+            if isolated {
+                model.selectedTaskID = model.snapshot.rootTasks.first(where: {
+                    model.snapshot.children(of: $0.id).count == 2 && model.snapshot.sessions(for: $0.id).count == 2
+                })?.id ?? model.snapshot.rootTasks.first?.id
+            }
             configureMenu(); configureWindow(); configureHotKey()
             signal(SIGTERM, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
@@ -408,7 +412,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             checks["nativeWindowVisible"] = panel.isVisible && panel.contentView is NSHostingView<RootView>
             checks["windowHasNoToolbar"] = panel.toolbar == nil
             checks["sidebarStartsAt300"] = panel.contentView.flatMap { findSplitView(in: $0)?.subviews.first?.frame.width }.map { abs($0 - 300) < 2 } ?? false
-            checks["treeGroupsSeededSubtasks"] = model.snapshot.outlineTasks.prefix(3).map(\.parentID) == [nil, model.selectedTaskID, model.selectedTaskID]
+            // Time ordering can select the newer standalone task on startup.
+            // Locate this fixture by its relationships rather than its list position.
+            guard let seededTask = model.snapshot.rootTasks.first(where: {
+                model.snapshot.children(of: $0.id).count == 2 && model.snapshot.sessions(for: $0.id).count == 2
+            }), let parentIndex = model.snapshot.outlineTasks.firstIndex(where: { $0.id == seededTask.id }) else {
+                throw LiteError.message("窗口验收缺少父子任务与多会话样例。")
+            }
+            model.selectedTaskID = seededTask.id
+            checks["treeGroupsSeededSubtasks"] = model.snapshot.outlineTasks.dropFirst(parentIndex).prefix(3).map(\.parentID) == [nil, seededTask.id, seededTask.id]
             checks["taskHasTwoIndependentSessions"] = model.sessions.count == 2 && Set(model.sessions.map(\.status)).count == 2
             checks.merge(runMarkdownAcceptance(in: content)) { _, new in new }
             if let screenshot = argument("--screenshot-output") { try capture(screenshot); checks["screenshotWritten"] = FileManager.default.fileExists(atPath: screenshot) }

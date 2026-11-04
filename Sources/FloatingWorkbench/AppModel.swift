@@ -2,6 +2,8 @@ import AppKit
 import Combine
 import LiteCore
 
+enum TaskSessionActivity { case none, running, unreadCompletion }
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var snapshot = TaskSnapshot()
@@ -73,6 +75,14 @@ final class AppModel: ObservableObject {
             collapsedTaskIDs.insert(task.id)
             if selectedTask?.parentID == task.id { selectedTaskID = task.id }
         }
+    }
+    func sessionActivity(_ task: TaskItem) -> TaskSessionActivity {
+        // Aggregate from all children, including collapsed and filtered-out tasks.
+        let taskIDs = Set([task.id] + snapshot.children(of: task.id).map(\.id))
+        if snapshot.sessions.contains(where: { $0.status == .running && $0.taskID.map(taskIDs.contains) == true }) {
+            return .running
+        }
+        return hasUnreadCompletion(task) ? .unreadCompletion : .none
     }
     func hasUnreadCompletion(_ task: TaskItem) -> Bool {
         task.hasUnreadCompletion || (collapsedTaskIDs.contains(task.id) && snapshot.children(of: task.id).contains { $0.hasUnreadCompletion })

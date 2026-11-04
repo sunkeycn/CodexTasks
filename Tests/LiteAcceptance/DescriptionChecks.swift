@@ -63,7 +63,7 @@ func runDescriptionChecks(root: URL, base: Date) throws {
     """)
     let migrated = try TaskStore(url: legacyURL)
     let legacy = try migrated.snapshot()
-    check("schema-four-upgrades-to-five", try scalar(legacyURL, "PRAGMA user_version") == 5)
+    check("schema-four-upgrades-to-seven", try scalar(legacyURL, "PRAGMA user_version") == 7)
     check("schema-four-keeps-order-hierarchy-and-unread", legacy.rootTasks.map(\.id) == [9,8] && legacy.children(of: 8).first?.id == 10 && legacy.rootTasks.last?.hasUnreadCompletion == true)
     check("schema-four-new-fields-default-empty", legacy.tasks.allSatisfy { $0.details.isEmpty } && legacy.sessions.first?.projectName == "" && legacy.sessions.first?.taskID == 8)
     try migrated.setTaskDetails(8, markdown)
